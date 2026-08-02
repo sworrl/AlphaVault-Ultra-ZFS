@@ -1,9 +1,9 @@
 # AlphaSteg
 ## Audio Steganography Suite
 
-**AlphaSteg is a tool for embedding and extracting hidden payloads inside audio tracks.**
+### AlphaSteg is a tool for embedding and extracting hidden payloads inside audio tracks.
 
- It supports both analog audio streams (hiding a second song inside a song) and digital files (hiding zips, pdfs, images, or text files inside audio). It features many different encoding and decoding formats, some supporting file encryption.
+**It supports both analog audio streams (hiding a second song inside a song) and digital files (hiding zips, pdfs, images, or text files inside audio). It features many different encoding and decoding formats, some supporting file encryption.**
 
  ![App Screenshot](https://github.com/bennjordan/AlphaSteg/blob/main/screen.png?raw=true)
 
