@@ -1,0 +1,881 @@
+/* Base Reset and Fonts */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: #121212;
+    color: #e0e0e0;
+    font-family: 'Outfit', sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #121212;
+}
+::-webkit-scrollbar-thumb {
+    background: #333333;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #444444;
+}
+
+/* App Container Layout */
+.app-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header */
+.app-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #282828;
+    padding-bottom: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.app-logo {
+    width: 54px;
+    height: 32px;
+}
+
+.logo-waveform {
+    stroke-dasharray: 4, 2;
+}
+
+.logo-text h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    line-height: 1.1;
+}
+
+.logo-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.version-tag {
+    font-size: 0.75rem;
+    color: #808080;
+    font-weight: 400;
+}
+
+/* Navigation Tabs */
+.app-nav {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.nav-btn {
+    background: transparent;
+    border: 1px solid #333333;
+    color: #a0a0a0;
+    padding: 0.5rem 1.25rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.nav-btn:hover {
+    border-color: #555555;
+    color: #ffffff;
+}
+
+.nav-btn.active {
+    background-color: #ffffff;
+    border-color: #ffffff;
+    color: #121212;
+}
+
+/* Cards Design System */
+.card {
+    background-color: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.card h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #ffffff;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 1rem;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Form Controls & Inputs */
+.input-group {
+    display: flex;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+input[type="text"],
+input[type="password"] {
+    flex: 1;
+    background-color: #121212;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+    border-color: #606060;
+}
+
+button {
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.btn-primary {
+    background-color: #ffffff;
+    color: #121212;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.95rem;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: #e0e0e0;
+}
+
+.btn-primary:disabled {
+    background-color: #282828;
+    color: #606060;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background-color: transparent;
+    border: 1px solid #444444;
+    color: #ffffff;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.95rem;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: #ffffff;
+}
+
+.btn-secondary:disabled {
+    border-color: #282828;
+    color: #606060;
+    cursor: not-allowed;
+}
+
+.w-full {
+    width: 100%;
+}
+
+/* Track Details Card */
+.track-card {
+    border-left: 3px solid #ffffff;
+}
+
+.track-details {
+    display: flex;
+    gap: 1.25rem;
+    align-items: center;
+}
+
+#track-thumbnail {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid #333333;
+    background-color: #121212;
+}
+
+.track-text h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 0.25rem;
+}
+
+.track-text p {
+    font-size: 0.9rem;
+    color: #a0a0a0;
+    margin-bottom: 0.5rem;
+}
+
+.source-badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    background-color: #282828;
+    color: #a0a0a0;
+    border: 1px solid #383838;
+}
+
+/* Visualizer Card */
+.visualizer-card {
+    height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background-color: #0b0b0b;
+    border-color: #222222;
+}
+
+#visualizer-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+#visualizer-placeholder {
+    position: absolute;
+    color: #444444;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* Stream Mode Toggle */
+.stream-toggle-container {
+    width: 100%;
+}
+
+.stream-toggle-bg {
+    display: flex;
+    background-color: #121212;
+    border: 1px solid #2e2e2e;
+    padding: 3px;
+    border-radius: 6px;
+    position: relative;
+    width: 100%;
+}
+
+.stream-toggle-slider {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc(50% - 4px);
+    background-color: #ffffff;
+    border-radius: 4px;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1;
+}
+
+.toggle-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #888888;
+    padding: 0.75rem 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    transition: color 0.2s ease;
+}
+
+.toggle-btn.active {
+    color: #121212;
+}
+
+/* Password Panel for Player */
+.password-panel {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #282828;
+    animation: slideDown 0.2s ease forwards;
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.checkbox-group input[type="checkbox"],
+.form-group.row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #ffffff;
+    cursor: pointer;
+}
+
+.checkbox-group label,
+.form-group.row label {
+    font-size: 0.9rem;
+    color: #a0a0a0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.password-input-group {
+    animation: slideDown 0.2s ease forwards;
+}
+
+/* Player Audio Controls Card */
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    margin-bottom: 1.25rem;
+}
+
+.progress-container span {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #808080;
+    font-variant-numeric: tabular-nums;
+}
+
+#seek-slider {
+    flex: 1;
+    height: 4px;
+    background: #2a2a2a;
+    outline: none;
+    border-radius: 2px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+#seek-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+#seek-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: none;
+    border-radius: 50%;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.control-buttons-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.btn-round {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-round:hover:not(:disabled) {
+    background-color: #e0e0e0;
+    transform: scale(1.02);
+}
+
+.btn-round:disabled {
+    background-color: #2a2a2a;
+    cursor: not-allowed;
+}
+
+.btn-round svg path {
+    fill: #121212;
+}
+
+.btn-round:disabled svg path {
+    fill: #555555;
+}
+
+.volume-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.btn-icon {
+    background: transparent;
+    color: #a0a0a0;
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-icon:hover {
+    color: #ffffff;
+}
+
+.btn-icon svg fill {
+    transition: fill 0.2s ease;
+}
+
+.btn-icon:hover svg path {
+    fill: #ffffff;
+}
+
+#volume-slider {
+    width: 80px;
+    height: 4px;
+    background: #2a2a2a;
+    outline: none;
+    border-radius: 2px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+}
+
+#volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #a0a0a0;
+    cursor: pointer;
+}
+
+#volume-slider::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border: none;
+    border-radius: 50%;
+    background: #a0a0a0;
+    cursor: pointer;
+}
+
+/* ENCODER VIEW STYLING */
+.view-section {
+    display: none;
+}
+
+.view-section.active {
+    display: block;
+}
+
+.upload-row {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.upload-box {
+    flex: 1;
+    border: 2px dashed #333333;
+    border-radius: 6px;
+    height: 140px;
+    position: relative;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #121212;
+    transition: all 0.2s ease;
+}
+
+.upload-box:hover {
+    border-color: #555555;
+}
+
+.upload-box.dragover {
+    border-color: #ffffff;
+    background-color: #1e1e1e;
+}
+
+.file-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.upload-content {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    pointer-events: none;
+    padding: 1rem;
+}
+
+.upload-content h4 {
+    font-size: 0.9rem;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.file-name {
+    font-size: 0.75rem;
+    color: #707070;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group.row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.slider-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.slider-label label {
+    font-size: 0.9rem;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+#stego-strength-val {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+#stego-strength {
+    width: 100%;
+    height: 4px;
+    background: #2a2a2a;
+    outline: none;
+    border-radius: 2px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+}
+
+#stego-strength::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+#stego-strength::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: none;
+    border-radius: 50%;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.field-help {
+    display: block;
+    font-size: 0.75rem;
+    color: #707070;
+    margin-top: 0.35rem;
+}
+
+/* Encoder Overlay & Processing */
+.processing-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(26, 26, 26, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    text-align: center;
+    padding: 2rem;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #2a2a2a;
+    border-top: 3px solid #ffffff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+}
+
+.processing-overlay h4 {
+    font-size: 1.1rem;
+    color: #ffffff;
+    margin-bottom: 0.5rem;
+}
+
+.processing-overlay p {
+    font-size: 0.85rem;
+    color: #707070;
+}
+
+/* Result Card */
+.result-card {
+    margin-top: 1.5rem;
+    border-top: 1px solid #282828;
+    padding-top: 1.5rem;
+}
+
+.success-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+}
+
+.success-banner svg {
+    background-color: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 50%;
+    padding: 4px;
+}
+
+.success-banner h4 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.result-buttons {
+    display: flex;
+    gap: 1rem;
+}
+
+.result-buttons a,
+.result-buttons button {
+    flex: 1;
+    text-align: center;
+    text-decoration: none;
+    display: block;
+}
+
+/* Animations */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 600px) {
+    .app-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .app-nav {
+        width: 100%;
+    }
+    
+    .nav-btn {
+        flex: 1;
+    }
+    
+    .upload-row {
+        flex-direction: column;
+    }
+    
+    .upload-box {
+        height: 120px;
+    }
+    
+    .result-buttons {
+        flex-direction: column;
+    }
+}
+
+/* OR Separator */
+.or-separator {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #555555;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin: 0.75rem 0;
+    position: relative;
+    user-select: none;
+}
+
+.or-separator::before,
+.or-separator::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 42%;
+    height: 1px;
+    background-color: #262626;
+}
+
+.or-separator::before {
+    left: 0;
+}
+
+.or-separator::after {
+    right: 0;
+}
+
+/* Player upload box specific styling */
+.player-upload-box {
+    height: 70px;
+    border-style: dashed;
+    border-color: #2a2a2a;
+}
+
+.player-upload-box .upload-content {
+    flex-direction: row;
+    gap: 0.75rem;
+    padding: 0.5rem;
+}
+
+.player-upload-box .upload-content svg {
+    margin-bottom: 0;
+}
+
+.player-upload-box .file-name {
+    max-width: 100%;
+    font-size: 0.85rem;
+    color: #888888;
+}
+
+/* App Footer styling */
+.app-footer {
+    text-align: center;
+    margin-top: auto;
+    padding-top: 1.5rem;
+    border-top: 1px solid #222222;
+}
+
+.app-footer p {
+    font-size: 0.8rem;
+    color: #606060;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+}
+
+/* Custom Select Dropdowns */
+.select-group select {
+    width: 100%;
+    background-color: #121212;
+    border: 1px solid #333333;
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 0.95rem;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    transition: border-color 0.2s ease;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23a0a0a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1.2rem;
+    padding-right: 2.5rem;
+}
+
+.select-group select:focus {
+    border-color: #606060;
+}
+
+.select-group label {
+    display: block;
+    font-size: 0.9rem;
+    color: #ffffff;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.select-group {
+    margin-bottom: 1.25rem;
+}
+
+/* Warning/Info banner styling */
+.warning-banner {
+    border: 1px solid #bf3f3f;
+    background-color: #1a0f0f;
+    color: #e5a0a0;
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    border-left: 3px solid #d9534f;
+}
