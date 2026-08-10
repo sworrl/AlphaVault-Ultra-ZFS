@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity() {
 
     private enum class SortMode(val label: String) { DATE("newest"), NAME("name"), SIZE("size") }
     private var vaultSortMode = SortMode.DATE
+    private var vaultTagFilter: String? = null
     private var lastVaultEntries: List<VaultVolume.Entry> = emptyList()
 
     // Cascade password for vaulted files: ONLY the user's code, passed by the
@@ -196,7 +197,10 @@ class MainActivity : AppCompatActivity() {
         appSettings = com.alphasteg.pro.data.AppSettings(this)
 
         findViewById<TextView>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
-        findViewById<TextView>(R.id.tvVaultSort).setOnClickListener { cycleVaultSort() }
+        findViewById<TextView>(R.id.tvVaultSort).apply {
+            setOnClickListener { cycleVaultSort() }
+            setOnLongClickListener { showTagFilterDialog(); true }
+        }
 
         setupEdgeToEdgeInsets()
 
@@ -896,14 +900,17 @@ class MainActivity : AppCompatActivity() {
                 vaultFileList.removeViewAt(i)
             }
         }
+        val filtered = vaultTagFilter?.let { tag -> entries.filter { tag in it.tags } } ?: entries
         val sorted = when (vaultSortMode) {
-            SortMode.DATE -> entries.sortedByDescending { it.createdAt }
-            SortMode.NAME -> entries.sortedBy { it.name.lowercase() }
-            SortMode.SIZE -> entries.sortedByDescending { it.originalSize }
+            SortMode.DATE -> filtered.sortedByDescending { it.createdAt }
+            SortMode.NAME -> filtered.sortedBy { it.name.lowercase() }
+            SortMode.SIZE -> filtered.sortedByDescending { it.originalSize }
         }
-        findViewById<TextView>(R.id.tvVaultSort).text =
-            if (entries.isEmpty()) getString(R.string.vault_files_sub)
-            else "${entries.size} files · sorted by ${vaultSortMode.label} · tap to change"
+        findViewById<TextView>(R.id.tvVaultSort).text = when {
+            entries.isEmpty() -> getString(R.string.vault_files_sub)
+            vaultTagFilter != null -> "#$vaultTagFilter · ${sorted.size} files · long-press to clear filter"
+            else -> "${entries.size} files · by ${vaultSortMode.label} · tap to sort, long-press to filter"
+        }
         if (sorted.isEmpty()) {
             tvEmptyVault.visibility = View.VISIBLE
             vaultTreemap.visibility = View.GONE
@@ -933,6 +940,22 @@ class MainActivity : AppCompatActivity() {
         val modes = SortMode.values()
         vaultSortMode = modes[(vaultSortMode.ordinal + 1) % modes.size]
         renderVaultedRows(lastVaultEntries)
+    }
+
+    private fun showTagFilterDialog() {
+        val allTags = lastVaultEntries.flatMap { it.tags }.distinct().sorted()
+        if (allTags.isEmpty() && vaultTagFilter == null) {
+            Toast.makeText(this, "No tags yet. Add tags from a file's menu.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val options = (if (vaultTagFilter != null) listOf("Clear filter") else emptyList()) + allTags.map { "#$it" }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Filter by tag")
+            .setItems(options.toTypedArray()) { _, i ->
+                vaultTagFilter = if (vaultTagFilter != null && i == 0) null else options[i].removePrefix("#")
+                renderVaultedRows(lastVaultEntries)
+            }
+            .show()
     }
 
     private data class FileKind(val emoji: String, val color: Int)
@@ -999,6 +1022,15 @@ class MainActivity : AppCompatActivity() {
             setTextColor(kind.color)
             textSize = 12f
         })
+        if (file.tags.isNotEmpty()) {
+            col.addView(TextView(this).apply {
+                text = file.tags.joinToString(" ") { "#$it" }
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.av_text_secondary))
+                textSize = 11f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+        }
 
         row.addView(badge)
         row.addView(col)
@@ -1006,7 +1038,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVaultedFileMenu(file: VaultVolume.Entry) {
-        val options = arrayOf("View in app", "Rename", "Set color label", "Restore to Downloads", "Delete from vault")
+        val options = arrayOf("View in app", "Rename", "Set color label", "Edit tags", "Restore to Downloads", "Delete from vault")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(file.name)
             .setItems(options) { _, which ->
@@ -1014,10 +1046,31 @@ class MainActivity : AppCompatActivity() {
                     0 -> viewVaultedFile(file)
                     1 -> renameVaultedFile(file)
                     2 -> pickColorLabel(file)
-                    3 -> restoreVaultedFile(file)
-                    4 -> confirmDeleteVaulted(file)
+                    3 -> editTags(file)
+                    4 -> restoreVaultedFile(file)
+                    5 -> confirmDeleteVaulted(file)
                 }
             }
+            .show()
+    }
+
+    private fun editTags(file: VaultVolume.Entry) {
+        val input = android.widget.EditText(this).apply {
+            setText(file.tags.joinToString(", "))
+            hint = "comma, separated, tags"
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Tags for ${file.name}")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val tags = input.text.toString().split(",")
+                val pool = currentPool
+                Thread {
+                    runCatching { vaultVolume.setTags(file.fileId, tags, vaultPassword, pool) }
+                    runOnUiThread { refreshVaultUi() }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 

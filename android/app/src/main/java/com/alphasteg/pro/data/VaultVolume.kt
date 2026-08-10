@@ -35,7 +35,8 @@ class VaultVolume {
         val totalLen: Int,
         val numData: Int,
         val createdAt: Long,
-        val colorLabel: Int = 0   // 0 = none; otherwise an ARGB color the user assigned
+        val colorLabel: Int = 0,        // 0 = none; otherwise an ARGB color the user assigned
+        val tags: List<String> = emptyList()
     )
 
     data class Index(val generation: Long, val entries: List<Entry>)
@@ -197,6 +198,14 @@ class VaultVolume {
         saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
     }
 
+    /** Replace the tags on a vaulted file. */
+    fun setTags(fileId: String, tags: List<String>, password: String, pool: List<File>) {
+        val clean = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val current = loadIndex(pool, password)
+        val updated = current.entries.map { if (it.fileId == fileId) it.copy(tags = clean) else it }
+        saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
+    }
+
     fun delete(fileId: String, password: String, pool: List<File>) {
         for (f in pool) {
             if (!FlacCarrierEngine.isFlacFile(f)) continue
@@ -292,6 +301,7 @@ class VaultVolume {
                 put("chunkCount", e.chunkCount); put("chunkSize", e.chunkSize)
                 put("totalLen", e.totalLen); put("numData", e.numData); put("createdAt", e.createdAt)
                 put("colorLabel", e.colorLabel)
+                put("tags", JSONArray(e.tags))
             })
         }
         return JSONObject().put("generation", index.generation).put("entries", arr).toString()
@@ -307,7 +317,8 @@ class VaultVolume {
                 Entry(
                     o.getString("fileId"), o.getString("name"), o.getLong("originalSize"),
                     o.getInt("chunkCount"), o.getInt("chunkSize"), o.getInt("totalLen"),
-                    o.getInt("numData"), o.getLong("createdAt"), o.optInt("colorLabel", 0)
+                    o.getInt("numData"), o.getLong("createdAt"), o.optInt("colorLabel", 0),
+                    o.optJSONArray("tags")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
                 )
             )
         }
