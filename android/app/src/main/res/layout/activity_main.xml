@@ -271,23 +271,22 @@
                     android:textSize="12sp"
                     android:textStyle="bold" />
 
-                <LinearLayout
-                    android:id="@+id/poolDiskList"
+                <com.alphasteg.pro.ui.DiskArrayView
+                    android:id="@+id/diskArray"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    android:orientation="vertical">
+                    android:layout_marginBottom="12dp" />
 
-                    <TextView
-                        android:id="@+id/tvEmptyDisks"
-                        android:layout_width="match_parent"
-                        android:layout_height="100dp"
-                        android:background="@drawable/bg_cyber_card"
-                        android:gravity="center"
-                        android:text="@string/disks_empty"
-                        android:textColor="@color/av_text_disabled"
-                        android:textSize="13sp" />
-                </LinearLayout>
+                <TextView
+                    android:id="@+id/tvEmptyDisks"
+                    android:layout_width="match_parent"
+                    android:layout_height="100dp"
+                    android:layout_marginBottom="12dp"
+                    android:background="@drawable/bg_cyber_card"
+                    android:gravity="center"
+                    android:text="@string/disks_empty"
+                    android:textColor="@color/av_text_disabled"
+                    android:textSize="13sp" />
 
             </LinearLayout>
         </ScrollView>
@@ -453,7 +452,7 @@
                     android:contentDescription="@string/nav_vault"
                     android:duplicateParentState="true"
                     android:src="@drawable/ic_nav_vault"
-                    app:tint="@color/nav_item_color" />
+                    app:tint="@color/nav_vault_color" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -461,7 +460,7 @@
                     android:layout_marginTop="3dp"
                     android:duplicateParentState="true"
                     android:text="@string/nav_vault"
-                    android:textColor="@color/nav_item_color"
+                    android:textColor="@color/nav_vault_color"
                     android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -481,7 +480,7 @@
                     android:contentDescription="@string/nav_disks"
                     android:duplicateParentState="true"
                     android:src="@drawable/ic_nav_disks"
-                    app:tint="@color/nav_item_color" />
+                    app:tint="@color/nav_disks_color" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -489,7 +488,7 @@
                     android:layout_marginTop="3dp"
                     android:duplicateParentState="true"
                     android:text="@string/nav_disks"
-                    android:textColor="@color/nav_item_color"
+                    android:textColor="@color/nav_disks_color"
                     android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -509,7 +508,7 @@
                     android:contentDescription="@string/nav_stego"
                     android:duplicateParentState="true"
                     android:src="@drawable/ic_nav_stego"
-                    app:tint="@color/nav_item_color" />
+                    app:tint="@color/nav_stego_color" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -517,7 +516,7 @@
                     android:layout_marginTop="3dp"
                     android:duplicateParentState="true"
                     android:text="@string/nav_stego"
-                    android:textColor="@color/nav_item_color"
+                    android:textColor="@color/nav_stego_color"
                     android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>
@@ -537,7 +536,7 @@
                     android:contentDescription="@string/nav_server"
                     android:duplicateParentState="true"
                     android:src="@drawable/ic_nav_sync"
-                    app:tint="@color/nav_item_color" />
+                    app:tint="@color/nav_server_color" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -545,7 +544,7 @@
                     android:layout_marginTop="3dp"
                     android:duplicateParentState="true"
                     android:text="@string/nav_server"
-                    android:textColor="@color/nav_item_color"
+                    android:textColor="@color/nav_server_color"
                     android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>

@@ -30,6 +30,7 @@ import com.alphasteg.pro.data.VaultLibrary
 import com.alphasteg.pro.data.VaultVolume
 import com.alphasteg.pro.engine.CryptoEngine
 import com.alphasteg.pro.engine.RaidVaultEngine
+import com.alphasteg.pro.ui.DiskArrayView
 import com.google.android.material.materialswitch.MaterialSwitch
 import java.io.File
 import java.io.InputStream
@@ -48,7 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStorageDetail: TextView
     private lateinit var barUsed: View
     private lateinit var barFree: View
-    private lateinit var poolDiskList: LinearLayout
+    private lateinit var diskArray: com.alphasteg.pro.ui.DiskArrayView
     private lateinit var tvEmptyDisks: TextView
     private lateinit var tvEmptyVault: TextView
     private lateinit var vaultFileList: LinearLayout
@@ -166,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         tvStorageDetail = findViewById(R.id.tvStorageDetail)
         barUsed = findViewById(R.id.barUsed)
         barFree = findViewById(R.id.barFree)
-        poolDiskList = findViewById(R.id.poolDiskList)
+        diskArray = findViewById(R.id.diskArray)
         tvEmptyDisks = findViewById(R.id.tvEmptyDisks)
         tvEmptyVault = findViewById(R.id.tvEmptyVault)
         vaultFileList = findViewById(R.id.vaultFileList)
@@ -515,20 +516,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderPoolDisks(tracks: List<FlacTrack>) {
-        // Remove any previously rendered rows, keep the empty-state placeholder.
-        for (i in poolDiskList.childCount - 1 downTo 0) {
-            if (poolDiskList.getChildAt(i) !== tvEmptyDisks) {
-                poolDiskList.removeViewAt(i)
-            }
-        }
         if (tracks.isEmpty()) {
             tvEmptyDisks.visibility = View.VISIBLE
+            diskArray.visibility = View.GONE
+            diskArray.setDisks(emptyList())
             return
         }
         tvEmptyDisks.visibility = View.GONE
-        for (t in tracks) {
-            poolDiskList.addView(buildTrackRow(t))
+        diskArray.visibility = View.VISIBLE
+        val maxSize = tracks.maxOf { it.size }.coerceAtLeast(1L)
+        val disks = tracks.mapIndexed { i, t ->
+            val color = android.graphics.Color.HSVToColor(floatArrayOf(i * 360f / tracks.size, 0.62f, 1f))
+            DiskArrayView.Disk(
+                label = t.name.substringBeforeLast('.'),
+                sub = "${t.folder.ifEmpty { "Music" }} · ${formatSize(t.size)}",
+                usedFraction = (t.size.toFloat() / maxSize).coerceIn(0.05f, 1f),
+                color = color
+            )
         }
+        diskArray.setDisks(disks)
     }
 
     /**
@@ -847,20 +853,70 @@ class MainActivity : AppCompatActivity() {
         renderVaultedRows(lastVaultEntries)
     }
 
+    private data class FileKind(val emoji: String, val color: Int)
+
+    private fun kindOf(name: String): FileKind {
+        return when (name.substringAfterLast('.', "").lowercase()) {
+            "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic" -> FileKind("🖼", 0xFF00F2FE.toInt())
+            "mp4", "mkv", "webm", "mov", "avi", "m4v", "3gp" -> FileKind("🎬", 0xFF9D4EDD.toInt())
+            "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus" -> FileKind("🎵", 0xFF2ECC71.toInt())
+            "pdf" -> FileKind("📕", 0xFFFF5D5D.toInt())
+            "doc", "docx", "odt", "rtf" -> FileKind("📄", 0xFF4DA3FF.toInt())
+            "zip", "rar", "7z", "tar", "gz" -> FileKind("🗜", 0xFFFFA24D.toInt())
+            "txt", "md", "json", "csv", "log", "xml" -> FileKind("📝", 0xFF7FD1FF.toInt())
+            else -> FileKind("🔒", 0xFFB0BAC9.toInt())
+        }
+    }
+
     private fun buildVaultedRow(file: VaultVolume.Entry): View {
-        val row = TextView(this)
-        val pad = dp(14)
-        row.setPadding(pad, pad, pad, pad)
-        row.setBackgroundResource(R.drawable.bg_cyber_card)
-        row.setTextColor(ContextCompat.getColor(this, R.color.av_text_primary))
-        row.textSize = 13f
-        row.text = "🔒 ${file.name}\n${formatSize(file.originalSize)} · ${file.chunkCount} chunks across carriers"
-        val lp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = dp(8) }
-        row.layoutParams = lp
-        row.setOnClickListener { showVaultedFileMenu(file) }
+        val kind = kindOf(file.name)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(12), dp(14), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(0xFF0C1322.toInt())
+                setStroke(dp(1) + 1, kind.color)
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+            setOnClickListener { showVaultedFileMenu(file) }
+        }
+
+        val badge = TextView(this).apply {
+            text = kind.emoji
+            textSize = 20f
+            gravity = Gravity.CENTER
+            val s = dp(44)
+            layoutParams = LinearLayout.LayoutParams(s, s).apply { marginEnd = dp(12) }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor((kind.color and 0x00FFFFFF) or 0x33000000) // translucent tint
+            }
+        }
+
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        col.addView(TextView(this).apply {
+            text = file.name
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.av_text_primary))
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        })
+        col.addView(TextView(this).apply {
+            text = "${formatSize(file.originalSize)} · ${file.chunkCount} chunks"
+            setTextColor(kind.color)
+            textSize = 12f
+        })
+
+        row.addView(badge)
+        row.addView(col)
         return row
     }
 
