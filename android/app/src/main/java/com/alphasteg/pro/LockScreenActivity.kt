@@ -120,7 +120,17 @@ class LockScreenActivity : AppCompatActivity() {
             }
         }
         clearPin()
-        randomizeKeypad() // fresh shuffle each time a step is shown
+        layoutKeypad() // scrambled only when unlocking; fixed order during onboarding
+    }
+
+    /** Fixed, readable order while onboarding; shuffled only on the LOCKED screen. */
+    private fun layoutKeypad() {
+        if (step == Step.LOCKED) randomizeKeypad() else fixedKeypad()
+    }
+
+    private fun fixedKeypad() {
+        val chars = SecurityManager.ALPHABET
+        hexButtons.forEachIndexed { i, btn -> btn.text = chars[i].toString() }
     }
 
     private fun onSubmit() {
@@ -205,11 +215,11 @@ class LockScreenActivity : AppCompatActivity() {
                 if (enteredPin.length < MAX_LEN) {
                     enteredPin += btn.text.toString()
                     updatePinDisplay()
-                    if (settings.scramblePerPress) randomizeKeypad()
+                    // Reshuffle per keypress only when unlocking and the option is on.
+                    if (step == Step.LOCKED && settings.scramblePerPress) randomizeKeypad()
                 }
             }
         }
-        randomizeKeypad()
     }
 
     private fun randomizeKeypad() {
