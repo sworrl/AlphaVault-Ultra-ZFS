@@ -92,6 +92,99 @@ The vault lives entirely in the FLAC files; there is no app-private database.
 - Carrier reads and writes are streaming and metadata-only, so audio frames are
   never loaded into memory.
 
+## On-disk byte layouts
+
+The encryption envelope (`CryptoEngine`), all big-endian, sizes in bytes:
+
+```
+magic "AVMAX768"  8
+salt              32
+aesNonce          12
+chachaNonce       12
+ciphertext        n
+hmacTag           64     HMAC-SHA512 over everything before it
+```
+
+A FLAC file is `"fLaC"` then a chain of metadata blocks then audio frames. Each
+metadata block has a 4-byte header: 1 flag/type byte (top bit = last block, low 7
+bits = type) and a 24-bit big-endian length. To embed, `FlacCarrierEngine`
+inserts an APPLICATION block (type 2) whose data is a 4-byte id `"AVLT"` followed
+by one of our payloads, and clears the previous last-block flag. The audio frames
+are copied through unchanged, so the decoded audio is bit-identical.
+
+A data-chunk payload (`AVC1`), 37-byte header then the chunk:
+
+```
+magic "AVC1"   4
+fileId         16     ascii hex, identifies the vaulted file
+index          2      chunk index within the file
+count          2      total chunks for the file
+chunkSize      4
+totalLen       4      original ciphertext length before padding
+numData        2 -> 1 stored as 1 byte
+crc32          4      CRC32 of the chunk bytes
+chunk          n
+```
+
+A volume-index payload (`AVIX`), 20-byte header then the encrypted body:
+
+```
+magic "AVIX"   4
+generation     8      newest wins
+crc32          4      CRC32 of encBody
+encBodyLen     4
+encBody        n      the index JSON, encrypted with the code (an AVMAX768 envelope)
+```
+
+The index body is a JSON object `{generation, entries[]}` where each entry has
+`fileId, name, originalSize, chunkCount, chunkSize, totalLen, numData, createdAt`.
+
+## RAID recovery, worked
+
+With 4 data chunks `D0..D3`, `P = D0^D1^D2^D3` and `Q = g⁰D0 ^ g¹D1 ^ g²D2 ^ g³D3`
+(all in GF(2⁸), `g = 2`). Say `D1` and `D3` are both lost and their mirrors are
+gone too. From the survivors:
+
+```
+Pd = P ^ D0 ^ D2        = D1 ^ D3
+Qd = Q ^ g⁰D0 ^ g²D2    = g¹D1 ^ g³D3
+```
+
+Two equations, two unknowns. Solving over the field:
+
+```
+D1 = (Qd ^ g³·Pd) / (g¹ ^ g³)
+D3 = Pd ^ D1
+```
+
+Division is multiplication by the field inverse. `RaidReedSolomonTest` runs this
+for every pair of lost data chunks and checks the bytes come back exactly.
+
+## Flows
+
+- **Onboarding.** First launch has no credentials, so the lock screen walks
+  through: set master code, re-enter to confirm, set a different duress code,
+  re-enter to confirm. Codes are 8+ characters from the 24-key pad (`0-9`, `a-f`,
+  and `! @ # $ % & * ?`). Both are stored only as salted PBKDF2 verifiers.
+- **Unlock.** Enter the master code. The pad is shuffled (optionally per keypress).
+  The entered code becomes the vault key for the session and is passed to the main
+  screen; it is never stored.
+- **Vault.** Pick one or many files (or share them in). Each is cascade-encrypted,
+  RAID-6 chunked, and each chunk embedded in a carrier FLAC, spread across albums.
+  The index is updated and its replicas rewritten. Large files stream so the audio
+  is never held in memory. A progress modal shows each step and can go to the
+  background.
+- **Restore / view.** Reconstruct from carriers (rebuilding bad or missing chunks
+  from parity or mirror), decrypt, then either write to Downloads or open in the
+  in-app viewer. The viewer renders images, text, audio, video, and PDF inside a
+  screenshot-blocked window; plaintext never leaves the app.
+- **Duress.** Enter the duress code instead. It erases the stored credentials and
+  strips every AlphaVault block from the carriers, then shows an empty vault.
+- **Disguise.** With disguise on, the launcher is a working scientific calculator.
+  Typing the code into it, alone or inside an equation, unlocks the real app.
+- **Compartments.** A different code decrypts a different index, so the same
+  library holds separate vaults; each is invisible to the others.
+
 ## Security notes
 
 - Confidentiality rests only on the user's code. Files and the index are
