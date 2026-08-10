@@ -672,11 +672,16 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
         }
 
+        val topStatus = findViewById<TextView>(R.id.tvTopStatus)
+        topStatus.visibility = View.VISIBLE
+
         val progress = VaultVolume.Progress { done, total, message ->
             runOnUiThread {
                 progressText.text = message
                 bar.max = total.coerceAtLeast(1)
                 bar.progress = done.coerceIn(0, bar.max)
+                val pct = if (total > 0) (done * 100 / total).coerceIn(0, 100) else 0
+                topStatus.text = "$pct% · $message"
             }
         }
 
@@ -685,6 +690,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 runCatching { if (dialog.isShowing) dialog.dismiss() }
                 runCatching { stopService(svc) }
+                topStatus.visibility = View.GONE
                 result.onSuccess { msg ->
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     refreshVaultUi()
