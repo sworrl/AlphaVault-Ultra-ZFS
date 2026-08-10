@@ -115,21 +115,36 @@ class VaultViewerActivity : AppCompatActivity() {
         return scroll
     }
 
-    /** Video plays from an in-memory data source onto a secure surface (no disk, no other app). */
+    /** Video plays from an in-memory data source onto a secure surface, with a
+     *  scrub bar and play/pause via MediaController (no disk, no other app). */
     private fun videoView(name: String, bytes: ByteArray): View {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return message("In-app video needs Android 6+.\nUse Restore to export it instead.")
         }
-        val surface = android.view.SurfaceView(this).apply {
+        val frame = android.widget.FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         }
+        val surface = android.view.SurfaceView(this).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER)
+        }
+        frame.addView(surface)
+
+        val controller = android.widget.MediaController(this)
         surface.holder.addCallback(object : android.view.SurfaceHolder.Callback {
             override fun surfaceCreated(h: android.view.SurfaceHolder) {
                 runCatching {
                     val mp = MediaPlayer()
                     mp.setDataSource(ByteArrayMediaDataSource(bytes))
                     mp.setSurface(h.surface)
-                    mp.setOnPreparedListener { it.start() }
+                    mp.setOnPreparedListener {
+                        it.start()
+                        val control = mediaControlFor(mp)
+                        controller.setMediaPlayer(control)
+                        controller.setAnchorView(frame)
+                        controller.isEnabled = true
+                        frame.setOnClickListener { controller.show() }
+                        controller.show(0)
+                    }
                     mp.prepareAsync()
                     player = mp
                 }.onFailure {
@@ -139,7 +154,22 @@ class VaultViewerActivity : AppCompatActivity() {
             override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, ht: Int) {}
             override fun surfaceDestroyed(h: android.view.SurfaceHolder) { player?.release(); player = null }
         })
-        return surface
+        return frame
+    }
+
+    /** Bridge a raw MediaPlayer to MediaController so scrubbing and play/pause work. */
+    private fun mediaControlFor(mp: MediaPlayer) = object : android.widget.MediaController.MediaPlayerControl {
+        override fun start() = mp.start()
+        override fun pause() = mp.pause()
+        override fun getDuration(): Int = runCatching { mp.duration }.getOrDefault(0)
+        override fun getCurrentPosition(): Int = runCatching { mp.currentPosition }.getOrDefault(0)
+        override fun seekTo(pos: Int) { mp.seekTo(pos) }
+        override fun isPlaying(): Boolean = runCatching { mp.isPlaying }.getOrDefault(false)
+        override fun getBufferPercentage(): Int = 0
+        override fun canPause(): Boolean = true
+        override fun canSeekBackward(): Boolean = true
+        override fun canSeekForward(): Boolean = true
+        override fun getAudioSessionId(): Int = runCatching { mp.audioSessionId }.getOrDefault(0)
     }
 
     /** PDF rendered page-by-page in-app via a seekable in-memory descriptor (no disk, no other app). */

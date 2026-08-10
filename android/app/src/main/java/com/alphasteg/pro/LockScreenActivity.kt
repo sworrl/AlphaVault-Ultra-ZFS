@@ -1,6 +1,7 @@
 package com.alphasteg.pro
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -131,6 +132,27 @@ class LockScreenActivity : AppCompatActivity() {
     private fun fixedKeypad() {
         val chars = SecurityManager.ALPHABET
         hexButtons.forEachIndexed { i, btn -> btn.text = chars[i].toString() }
+        applyKeyColors()
+    }
+
+    // Each character in the alphabet gets its own bespoke color, so a key's
+    // color follows its character even when the pad is shuffled.
+    private val keyColors: Map<Char, Int> by lazy {
+        val alphabet = SecurityManager.ALPHABET
+        alphabet.mapIndexed { i, c ->
+            c to Color.HSVToColor(floatArrayOf(i * 360f / alphabet.length, 0.72f, 1f))
+        }.toMap()
+    }
+
+    private fun colorFor(c: Char): Int = keyColors[c] ?: Color.WHITE
+
+    private fun applyKeyColors() {
+        hexButtons.forEach { btn ->
+            val ch = btn.text.firstOrNull() ?: return@forEach
+            val col = colorFor(ch)
+            btn.setTextColor(col)
+            btn.setShadowLayer(14f, 0f, 0f, col) // soft neon glow
+        }
     }
 
     private fun onSubmit() {
@@ -225,6 +247,7 @@ class LockScreenActivity : AppCompatActivity() {
     private fun randomizeKeypad() {
         val shuffled = SecurityManager.ALPHABET.toList().shuffled()
         hexButtons.forEachIndexed { i, btn -> btn.text = shuffled[i].toString() }
+        applyKeyColors()
     }
 
     private fun updatePinDisplay() {

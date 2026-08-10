@@ -92,6 +92,10 @@ class MainActivity : AppCompatActivity() {
     private var vaultOriginalBytes: Long = 0L
     private var vaultStoredBytes: Long = 0L
 
+    private enum class SortMode(val label: String) { DATE("newest"), NAME("name"), SIZE("size") }
+    private var vaultSortMode = SortMode.DATE
+    private var lastVaultEntries: List<VaultVolume.Entry> = emptyList()
+
     // Cascade password for vaulted files: ONLY the user's code, passed by the
     // lock screen or calculator. No default key ever, so nothing is encrypted
     // under a value a modified build could know. Blank means the vault stays
@@ -114,10 +118,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val selectFileToVaultLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { processVaultFileSelection(it) }
+    private val selectFilesToVaultLauncher = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) vaultUris(uris, move = false)
     }
 
     private val deleteOriginalsLauncher = registerForActivityResult(
@@ -192,6 +196,7 @@ class MainActivity : AppCompatActivity() {
         appSettings = com.alphasteg.pro.data.AppSettings(this)
 
         findViewById<TextView>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
+        findViewById<TextView>(R.id.tvVaultSort).setOnClickListener { cycleVaultSort() }
 
         setupEdgeToEdgeInsets()
 
@@ -323,7 +328,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupVaultActions() {
         btnAddVaultFile.setOnClickListener {
-            selectFileToVaultLauncher.launch("*/*")
+            selectFilesToVaultLauncher.launch("*/*")
         }
 
         // Manual sync: same reconciliation the app runs at startup.
@@ -678,29 +683,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun processVaultFileSelection(uri: Uri) {
+    /** Vault one or many picked files as a batch, reading each in turn to stay memory-light. */
+    private fun vaultUris(uris: List<Uri>, move: Boolean) {
         if (vaultPassword.isBlank()) {
             Toast.makeText(this, "Vault is locked. Unlock with your code first.", Toast.LENGTH_LONG).show()
             return
         }
         if (currentPool.isEmpty()) {
-            Toast.makeText(
-                this,
-                "Grant All-files access and sync your FLAC library first, so there are carriers to vault into.",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(this, "Grant All-files access and sync your FLAC library first.", Toast.LENGTH_LONG).show()
             if (canRequestAllFilesAccess() && !hasAllFilesAccess()) promptAllFilesAccess()
             return
         }
-        val name = displayNameOf(uri)
-        val bytes = runCatching { contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
-        if (bytes == null) {
-            Toast.makeText(this, "Could not read the selected file.", Toast.LENGTH_LONG).show()
-            return
-        }
-        runVaultOperation("Vaulting “$name”", pool = currentPool, key = vaultPassword) { progress ->
-            val entry = vaultVolume.vault(name, bytes, vaultPassword, currentPool, System.currentTimeMillis(), progress)
-            "Vaulted “${entry.name}”: ${formatSize(entry.originalSize)} hidden across ${entry.chunkCount} FLAC carriers."
+        val pool = currentPool
+        val key = vaultPassword
+        val onDone: (() -> Unit)? = if (move) { { deleteOriginals(uris) } } else null
+        runVaultOperation(
+            title = "Vaulting ${uris.size} file${if (uris.size == 1) "" else "s"}",
+            pool = pool, key = key, onSuccess = onDone
+        ) { progress ->
+            var ok = 0
+            uris.forEachIndexed { i, uri ->
+                val name = displayNameOf(uri)
+                progress.update(i, uris.size, "Vaulting $name (${i + 1}/${uris.size})…")
+                runCatching {
+                    val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: return@forEachIndexed
+                    vaultVolume.vault(name, bytes, key, pool, System.currentTimeMillis(), progress)
+                }.onSuccess { ok++ }
+            }
+            "Vaulted $ok of ${uris.size} file${if (uris.size == 1) "" else "s"}."
         }
     }
 
@@ -808,17 +819,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderVaultedRows(entries: List<VaultVolume.Entry>) {
+        lastVaultEntries = entries
         for (i in vaultFileList.childCount - 1 downTo 0) {
             if (vaultFileList.getChildAt(i) !== tvEmptyVault) {
                 vaultFileList.removeViewAt(i)
             }
         }
-        if (entries.isEmpty()) {
+        val sorted = when (vaultSortMode) {
+            SortMode.DATE -> entries.sortedByDescending { it.createdAt }
+            SortMode.NAME -> entries.sortedBy { it.name.lowercase() }
+            SortMode.SIZE -> entries.sortedByDescending { it.originalSize }
+        }
+        findViewById<TextView>(R.id.tvVaultSort).text =
+            if (entries.isEmpty()) getString(R.string.vault_files_sub)
+            else "${entries.size} files · sorted by ${vaultSortMode.label} · tap to change"
+        if (sorted.isEmpty()) {
             tvEmptyVault.visibility = View.VISIBLE
             return
         }
         tvEmptyVault.visibility = View.GONE
-        for (e in entries) vaultFileList.addView(buildVaultedRow(e))
+        for (e in sorted) vaultFileList.addView(buildVaultedRow(e))
+    }
+
+    private fun cycleVaultSort() {
+        val modes = SortMode.values()
+        vaultSortMode = modes[(vaultSortMode.ordinal + 1) % modes.size]
+        renderVaultedRows(lastVaultEntries)
     }
 
     private fun buildVaultedRow(file: VaultVolume.Entry): View {
@@ -839,16 +865,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVaultedFileMenu(file: VaultVolume.Entry) {
-        val options = arrayOf("View in app", "Restore to Downloads", "Delete from vault")
+        val options = arrayOf("View in app", "Rename", "Restore to Downloads", "Delete from vault")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(file.name)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> viewVaultedFile(file)
-                    1 -> restoreVaultedFile(file)
-                    2 -> confirmDeleteVaulted(file)
+                    1 -> renameVaultedFile(file)
+                    2 -> restoreVaultedFile(file)
+                    3 -> confirmDeleteVaulted(file)
                 }
             }
+            .show()
+    }
+
+    private fun renameVaultedFile(file: VaultVolume.Entry) {
+        val input = android.widget.EditText(this).apply {
+            setText(file.name)
+            setSelection(0, file.name.substringBeforeLast('.').length.coerceAtMost(file.name.length))
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Rename")
+            .setView(input)
+            .setPositiveButton("Rename") { _, _ ->
+                val newName = input.text.toString().trim()
+                if (newName.isEmpty() || newName == file.name) return@setPositiveButton
+                val pool = currentPool
+                Thread {
+                    runCatching { vaultVolume.rename(file.fileId, newName, vaultPassword, pool) }
+                    runOnUiThread { refreshVaultUi() }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 

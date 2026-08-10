@@ -182,6 +182,13 @@ class VaultVolume {
         return ScrubReport(index.entries.size, healed, unrecoverable)
     }
 
+    /** Rename a vaulted file in the index (data chunks are untouched). */
+    fun rename(fileId: String, newName: String, password: String, pool: List<File>) {
+        val current = loadIndex(pool, password)
+        val updated = current.entries.map { if (it.fileId == fileId) it.copy(name = newName) else it }
+        saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
+    }
+
     fun delete(fileId: String, password: String, pool: List<File>) {
         for (f in pool) {
             if (!FlacCarrierEngine.isFlacFile(f)) continue
