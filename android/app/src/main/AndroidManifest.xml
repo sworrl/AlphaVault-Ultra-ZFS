@@ -15,9 +15,9 @@
         android:allowBackup="true"
         android:extractNativeLibs="true"
         android:icon="@drawable/ic_launcher"
-        android:label="AlphaSteg Pro"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.Dark"
+        android:theme="@style/Theme.AlphaVault"
         android:usesCleartextTraffic="true">
 
         <activity

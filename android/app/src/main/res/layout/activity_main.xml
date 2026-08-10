@@ -3,35 +3,36 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#050811">
+    android:background="@color/av_bg">
 
-    <!-- Top Action Bar (Cutout Aware with Bottom Cyan Line) -->
+    <!-- Floating Top Bar (Immersive Full Screen Canvas) -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentTop="true"
-        android:background="@drawable/bg_top_bar_glass"
+        android:background="@android:color/transparent"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="20dp"
-        android:paddingTop="12dp"
+        android:paddingTop="8dp"
         android:paddingEnd="20dp"
-        android:paddingBottom="12dp">
+        android:paddingBottom="8dp">
 
         <ImageView
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginEnd="12dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="10dp"
+            android:contentDescription="@string/app_name"
             android:src="@drawable/ic_launcher" />
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="ALPHAVAULT ULTRA // ZFS"
-            android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:text="@string/brand_title"
+            android:textColor="@color/av_text_primary"
+            android:textSize="17sp"
             android:textStyle="bold" />
 
         <TextView
@@ -39,17 +40,17 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_cyber_card"
-            android:paddingStart="12dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="6dp"
-            android:text="CASCADE 768-BIT"
-            android:textColor="#00F2FE"
+            android:paddingStart="10dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="4dp"
+            android:text="@string/badge_cascade"
+            android:textColor="@color/av_cyan"
             android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- Main View Pager / Container -->
+    <!-- Main Panel Container -->
     <FrameLayout
         android:id="@+id/fragmentContainer"
         android:layout_width="match_parent"
@@ -62,7 +63,9 @@
             android:id="@+id/panelVault"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:fillViewport="true">
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:scrollbars="none">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -75,13 +78,15 @@
                     android:layout_width="match_parent"
                     android:layout_height="140dp"
                     android:layout_marginBottom="16dp"
+                    app:cardBackgroundColor="@color/av_surface"
                     app:cardCornerRadius="16dp"
-                    app:strokeColor="#00F2FE"
+                    app:strokeColor="@color/av_cyan"
                     app:strokeWidth="1dp">
 
                     <ImageView
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
+                        android:contentDescription="@string/vault_banner_desc"
                         android:scaleType="centerCrop"
                         android:src="@drawable/cyber_vault_banner" />
 
@@ -99,8 +104,8 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="WHOLE LIBRARY STORAGE POOL (RAID-Z2)"
-                        android:textColor="#FFFFFF"
+                        android:text="@string/vault_pool_title"
+                        android:textColor="@color/av_text_primary"
                         android:textSize="15sp"
                         android:textStyle="bold" />
 
@@ -109,8 +114,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Maxed Out Cascade Encryption • 768-Bit Entropy (AES-256 + ChaCha20 + HMAC-SHA512) • Multi-Album Swap Proof"
-                        android:textColor="#00F2FE"
+                        android:text="@string/vault_pool_subtitle"
+                        android:textColor="@color/av_cyan"
                         android:textSize="12sp" />
 
                     <!-- Pool Mode Radio Selector -->
@@ -126,16 +131,16 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checked="true"
-                            android:text="Auto-Pool Whole Music Library (Multi-Album Resilient)"
-                            android:textColor="#FFFFFF"
+                            android:text="@string/pool_mode_auto"
+                            android:textColor="@color/av_text_primary"
                             android:textSize="13sp" />
 
                         <RadioButton
                             android:id="@+id/rbManualDisks"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Manual FLAC Disks Selection"
-                            android:textColor="#8F9CAE"
+                            android:text="@string/pool_mode_manual"
+                            android:textColor="@color/av_text_secondary"
                             android:textSize="13sp" />
                     </RadioGroup>
 
@@ -148,26 +153,28 @@
                     android:layout_marginBottom="16dp"
                     android:orientation="horizontal">
 
-                    <Button
+                    <androidx.appcompat.widget.AppCompatButton
                         android:id="@+id/btnAddVaultFile"
                         android:layout_width="0dp"
                         android:layout_height="52dp"
                         android:layout_marginEnd="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_neon_button"
-                        android:text="+ ENCRYPT &amp; VAULT"
-                        android:textColor="#050811"
+                        android:stateListAnimator="@null"
+                        android:text="@string/btn_encrypt_vault"
+                        android:textColor="@color/av_bg"
                         android:textStyle="bold" />
 
-                    <Button
+                    <androidx.appcompat.widget.AppCompatButton
                         android:id="@+id/btnScanVault"
                         android:layout_width="0dp"
                         android:layout_height="52dp"
                         android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/bg_keypad_button"
-                        android:text="🔍 AUTO-DISCOVER"
-                        android:textColor="#00F2FE"
+                        android:stateListAnimator="@null"
+                        android:text="@string/btn_auto_discover"
+                        android:textColor="@color/av_cyan"
                         android:textStyle="bold" />
                 </LinearLayout>
 
@@ -176,8 +183,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
-                    android:text="VAULTED SENSITIVE FILES"
-                    android:textColor="#00F2FE"
+                    android:text="@string/vault_files_header"
+                    android:textColor="@color/av_cyan"
                     android:textSize="12sp"
                     android:textStyle="bold" />
 
@@ -194,8 +201,8 @@
                         android:layout_height="100dp"
                         android:background="@drawable/bg_cyber_card"
                         android:gravity="center"
-                        android:text="No vaulted files found.\nTap '+ ENCRYPT &amp; VAULT' to store sensitive files safely."
-                        android:textColor="#4A5568"
+                        android:text="@string/vault_empty"
+                        android:textColor="@color/av_text_disabled"
                         android:textSize="13sp" />
                 </LinearLayout>
 
@@ -207,6 +214,9 @@
             android:id="@+id/panelStego"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:scrollbars="none"
             android:visibility="gone">
 
             <LinearLayout
@@ -218,8 +228,8 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="FLAC Audio Stego Spectrum Visualizer"
-                    android:textColor="#FFFFFF"
+                    android:text="@string/stego_title"
+                    android:textColor="@color/av_text_primary"
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
@@ -229,25 +239,27 @@
                     android:layout_height="160dp"
                     android:layout_marginTop="12dp"
                     android:layout_marginBottom="16dp"
+                    app:cardBackgroundColor="@color/av_surface"
                     app:cardCornerRadius="16dp"
-                    app:strokeColor="#00F2FE"
+                    app:strokeColor="@color/av_cyan"
                     app:strokeWidth="1.5dp">
 
                     <com.alphasteg.pro.ui.StegoVisualizerView
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
-                        android:background="#0A101D" />
+                        android:background="@color/av_surface" />
 
                 </com.google.android.material.card.MaterialCardView>
 
-                <Button
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnSelectFlac"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
                     android:layout_marginBottom="12dp"
                     android:background="@drawable/bg_keypad_button"
-                    android:text="🎵 SELECT CARRIER FLAC TRACK"
-                    android:textColor="#FFFFFF"
+                    android:stateListAnimator="@null"
+                    android:text="@string/btn_select_flac"
+                    android:textColor="@color/av_text_primary"
                     android:textStyle="bold" />
 
                 <TextView
@@ -256,17 +268,18 @@
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_cyber_card"
                     android:padding="14dp"
-                    android:text="No FLAC track selected"
-                    android:textColor="#8F9CAE" />
+                    android:text="@string/stego_none_selected"
+                    android:textColor="@color/av_text_secondary" />
 
-                <Button
+                <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnInspectTrack"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
                     android:layout_marginTop="16dp"
                     android:background="@drawable/bg_neon_button"
-                    android:text="INSPECT &amp; EXTRACT PAYLOAD"
-                    android:textColor="#050811"
+                    android:stateListAnimator="@null"
+                    android:text="@string/btn_inspect_track"
+                    android:textColor="@color/av_bg"
                     android:textStyle="bold" />
 
             </LinearLayout>
@@ -284,8 +297,8 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Wi-Fi External Web Server Sync"
-                android:textColor="#FFFFFF"
+                android:text="@string/server_title"
+                android:textColor="@color/av_text_primary"
                 android:textSize="18sp"
                 android:textStyle="bold" />
 
@@ -294,16 +307,16 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="24dp"
-                android:text="Enable this server to access your AlphaSteg vault from external web browsers over Wi-Fi."
-                android:textColor="#8F9CAE"
+                android:text="@string/server_desc"
+                android:textColor="@color/av_text_secondary"
                 android:textSize="13sp" />
 
             <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/switchServer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Enable Web Sync Server"
-                android:textColor="#FFFFFF"
+                android:text="@string/server_switch"
+                android:textColor="@color/av_text_primary"
                 android:textSize="16sp" />
 
             <TextView
@@ -314,8 +327,8 @@
                 android:background="@drawable/bg_cyber_card"
                 android:fontFamily="monospace"
                 android:padding="16dp"
-                android:text="Server Status: Stopped"
-                android:textColor="#00F2FE"
+                android:text="@string/server_status_stopped"
+                android:textColor="@color/av_cyan"
                 android:textSize="14sp" />
         </LinearLayout>
 
@@ -329,17 +342,104 @@
         android:layout_alignParentBottom="true"
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
-        android:paddingBottom="20dp">
+        android:paddingBottom="16dp">
 
-        <com.google.android.material.bottomnavigation.BottomNavigationView
+        <LinearLayout
             android:id="@+id/bottomNav"
             android:layout_width="match_parent"
-            android:layout_height="64dp"
+            android:layout_height="68dp"
             android:background="@drawable/bg_floating_dock"
             android:elevation="12dp"
-            app:itemIconTint="@color/nav_item_color"
-            app:itemTextColor="@color/nav_item_color"
-            app:menu="@menu/bottom_nav_menu" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp">
+
+            <LinearLayout
+                android:id="@+id/navVault"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_dock_item"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:contentDescription="@string/nav_vault"
+                    android:duplicateParentState="true"
+                    android:src="@drawable/ic_nav_vault"
+                    app:tint="@color/nav_item_color" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:duplicateParentState="true"
+                    android:text="@string/nav_vault"
+                    android:textColor="@color/nav_item_color"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/navStego"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_dock_item"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:contentDescription="@string/nav_stego"
+                    android:duplicateParentState="true"
+                    android:src="@drawable/ic_nav_stego"
+                    app:tint="@color/nav_item_color" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:duplicateParentState="true"
+                    android:text="@string/nav_stego"
+                    android:textColor="@color/nav_item_color"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/navServer"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_dock_item"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:contentDescription="@string/nav_server"
+                    android:duplicateParentState="true"
+                    android:src="@drawable/ic_nav_sync"
+                    app:tint="@color/nav_item_color" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:duplicateParentState="true"
+                    android:text="@string/nav_server"
+                    android:textColor="@color/nav_item_color"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+        </LinearLayout>
 
     </FrameLayout>
 

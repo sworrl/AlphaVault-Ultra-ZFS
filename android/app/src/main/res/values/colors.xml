@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="av_bg">#050811</color>
+    <color name="av_surface">#0A101D</color>
+    <color name="av_surface_raised">#0F172A</color>
+    <color name="av_stroke">#1E2D4A</color>
+    <color name="av_cyan">#00F2FE</color>
+    <color name="av_cyan_faint">#3300F2FE</color>
+    <color name="av_purple">#9D00FF</color>
+    <color name="av_text_primary">#FFFFFF</color>
+    <color name="av_text_secondary">#8F9CAE</color>
+    <color name="av_text_disabled">#4A5568</color>
+    <color name="av_danger">#FF4D4D</color>
+    <color name="av_amber">#FFB74D</color>
+</resources>

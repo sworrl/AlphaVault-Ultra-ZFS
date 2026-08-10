@@ -23,6 +23,7 @@ class LockScreenActivity : AppCompatActivity() {
     private lateinit var tvTitle: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvPinDisplay: TextView
+    private lateinit var btnPrimaryBio: Button
     private lateinit var btnSubmit: Button
     private lateinit var btnKeyBio: Button
     private lateinit var btnKeyClear: Button
@@ -43,21 +44,28 @@ class LockScreenActivity : AppCompatActivity() {
             setInheritShowWhenLocked(false)
         }
 
+        // Full Screen Edge-to-Edge Integration: bar colors come from the theme
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+
         setContentView(R.layout.activity_lock_screen)
 
         tvTitle = findViewById(R.id.tvTitle)
         tvStatus = findViewById(R.id.tvStatus)
         tvPinDisplay = findViewById(R.id.tvPinDisplay)
+        btnPrimaryBio = findViewById(R.id.btnPrimaryBio)
         btnSubmit = findViewById(R.id.btnSubmit)
         btnKeyBio = findViewById(R.id.btnKeyBio)
         btnKeyClear = findViewById(R.id.btnKeyClear)
 
         val rootLayout: View = findViewById(R.id.lockRoot)
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
-            val statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-            val cutoutTop = insets.displayCutout?.safeInsetTop ?: statusBarHeight
-            v.setPadding(v.paddingLeft, cutoutTop + 8, v.paddingRight, v.paddingBottom)
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
 
@@ -66,19 +74,32 @@ class LockScreenActivity : AppCompatActivity() {
         setupKeypad()
         setupBiometrics()
 
+        val biometricManager = BiometricManager.from(this)
+        val canAuth = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
+        val bioAvailable = (canAuth == BiometricManager.BIOMETRIC_SUCCESS)
+
+        if (!bioAvailable) {
+            btnPrimaryBio.visibility = View.GONE
+        }
+
         if (!securityManager.isVaultSetup()) {
-            tvTitle.text = "ALPHAVAULT // ONBOARDING"
-            tvStatus.text = "Setup a master PIN for your FLAC Vault"
-            btnSubmit.text = "CREATE MASTER VAULT"
+            tvTitle.text = getString(R.string.lock_title_onboarding)
+            tvStatus.text = getString(R.string.lock_status_setup)
+            btnSubmit.text = getString(R.string.btn_create_vault)
         } else {
-            tvTitle.text = "ALPHAVAULT ULTRA // LOCKED"
-            tvStatus.text = "Tap digits or use Biometric Fingerprint to unlock"
-            btnSubmit.text = "UNLOCK VAULT"
-            
-            // Post biometric prompt to UI message loop to guarantee window focus
-            tvTitle.postDelayed({
-                triggerBiometricPrompt()
-            }, 300)
+            tvTitle.text = getString(R.string.lock_title_locked)
+            tvStatus.text = getString(if (bioAvailable) R.string.lock_status_bio else R.string.lock_status_pin_only)
+            btnSubmit.text = getString(R.string.btn_pin_fallback)
+
+            if (bioAvailable) {
+                tvTitle.postDelayed({
+                    triggerBiometricPrompt()
+                }, 300)
+            }
+        }
+
+        btnPrimaryBio.setOnClickListener {
+            triggerBiometricPrompt()
         }
 
         btnSubmit.setOnClickListener {
@@ -177,7 +198,7 @@ class LockScreenActivity : AppCompatActivity() {
         promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("AlphaVault Biometric Unlock")
             .setSubtitle("Use your Pixel 10 Fingerprint or Face to unlock your FLAC Vault")
-            .setNegativeButtonText("Use PIN")
+            .setNegativeButtonText("Use PIN Fallback")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
             .build()
     }

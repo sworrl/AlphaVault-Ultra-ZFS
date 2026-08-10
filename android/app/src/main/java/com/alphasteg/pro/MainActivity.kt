@@ -13,12 +13,12 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.alphasteg.pro.engine.CryptoEngine
 import com.alphasteg.pro.engine.RaidVaultEngine
-import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.materialswitch.MaterialSwitch
 import java.io.InputStream
 
@@ -38,7 +38,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var panelVault: View
     private lateinit var panelStego: View
     private lateinit var panelServer: View
-    private lateinit var bottomNav: BottomNavigationView
+    private lateinit var navVault: View
+    private lateinit var navStego: View
+    private lateinit var navServer: View
 
     private lateinit var btnSelectFlac: Button
     private lateinit var tvSelectedFlac: TextView
@@ -69,8 +71,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Enable Edge-to-Edge Display Cutout & System Bar integration
+        // 100% Edge-to-Edge Canvas: bar colors come from the theme
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
 
         setContentView(R.layout.activity_main)
 
@@ -90,7 +95,9 @@ class MainActivity : AppCompatActivity() {
         panelVault = findViewById(R.id.panelVault)
         panelStego = findViewById(R.id.panelStego)
         panelServer = findViewById(R.id.panelServer)
-        bottomNav = findViewById(R.id.bottomNav)
+        navVault = findViewById(R.id.navVault)
+        navStego = findViewById(R.id.navStego)
+        navServer = findViewById(R.id.navServer)
 
         btnSelectFlac = findViewById(R.id.btnSelectFlac)
         tvSelectedFlac = findViewById(R.id.tvSelectedFlac)
@@ -99,11 +106,11 @@ class MainActivity : AppCompatActivity() {
         switchServer = findViewById(R.id.switchServer)
         tvServerUrl = findViewById(R.id.tvServerUrl)
 
-        setupCutoutAwareness()
+        setupEdgeToEdgeInsets()
 
         if (isDecoyMode) {
-            tvModeBadge.text = "DECOY MODE"
-            tvModeBadge.setTextColor(resources.getColor(android.R.color.holo_orange_light, theme))
+            tvModeBadge.text = getString(R.string.badge_decoy)
+            tvModeBadge.setTextColor(ContextCompat.getColor(this, R.color.av_amber))
         }
 
         setupNavigation()
@@ -113,39 +120,34 @@ class MainActivity : AppCompatActivity() {
         refreshVaultList()
     }
 
-    private fun setupCutoutAwareness() {
+    private fun setupEdgeToEdgeInsets() {
+        val barTypes = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+
         ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
-            val statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
-            val cutoutTop = insets.displayCutout?.safeInsetTop ?: statusBarHeight
-            v.setPadding(v.paddingLeft, cutoutTop + 12, v.paddingRight, v.paddingBottom)
+            val bars = insets.getInsets(barTypes)
+            v.setPadding(bars.left, bars.top, bars.right, v.paddingBottom)
+            insets
+        }
+
+        val dock = findViewById<View>(R.id.floatingDockContainer)
+        val basePadding = dock.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(dock) { v, insets ->
+            val bars = insets.getInsets(barTypes)
+            v.setPadding(
+                v.paddingLeft,
+                v.paddingTop,
+                v.paddingRight,
+                basePadding + bars.bottom
+            )
             insets
         }
     }
 
     private fun setupNavigation() {
-        bottomNav.setOnItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_vault -> {
-                    panelVault.visibility = View.VISIBLE
-                    panelStego.visibility = View.GONE
-                    panelServer.visibility = View.GONE
-                    true
-                }
-                R.id.nav_stego -> {
-                    panelVault.visibility = View.GONE
-                    panelStego.visibility = View.VISIBLE
-                    panelServer.visibility = View.GONE
-                    true
-                }
-                R.id.nav_server -> {
-                    panelVault.visibility = View.GONE
-                    panelStego.visibility = View.GONE
-                    panelServer.visibility = View.VISIBLE
-                    true
-                }
-                else -> false
-            }
-        }
+        navVault.setOnClickListener { showPanel(panelVault, navVault) }
+        navStego.setOnClickListener { showPanel(panelStego, navStego) }
+        navServer.setOnClickListener { showPanel(panelServer, navServer) }
+        showPanel(panelVault, navVault)
 
         rgPoolMode.setOnCheckedChangeListener { _, checkedId ->
             poolMode = if (checkedId == R.id.rbAutoLibrary) {
@@ -153,6 +155,15 @@ class MainActivity : AppCompatActivity() {
             } else {
                 RaidVaultEngine.PoolMode.MANUAL_DISKS
             }
+        }
+    }
+
+    private fun showPanel(panel: View, navItem: View) {
+        listOf(panelVault, panelStego, panelServer).forEach {
+            it.visibility = if (it === panel) View.VISIBLE else View.GONE
+        }
+        listOf(navVault, navStego, navServer).forEach {
+            it.isSelected = it === navItem
         }
     }
 
@@ -190,11 +201,11 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     startService(serviceIntent)
                 }
-                tvServerUrl.text = "Maxed Out Cascade Encryption Active (768-bit)\nAES-256-GCM + ChaCha20 + HMAC-SHA512"
+                tvServerUrl.text = getString(R.string.server_status_running)
             } else {
                 val serviceIntent = Intent(this, VaultService::class.java)
                 stopService(serviceIntent)
-                tvServerUrl.text = "Server Status: Stopped"
+                tvServerUrl.text = getString(R.string.server_status_stopped)
             }
         }
     }
@@ -237,11 +248,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshVaultList() {
         if (isDecoyMode) {
-            tvVaultStats.text = "0 Vault Files • Decoy Mode Active"
+            tvVaultStats.text = getString(R.string.vault_stats_decoy)
             tvEmptyVault.visibility = View.VISIBLE
             return
         }
-        tvVaultStats.text = "Whole Library Pool Active • 768-bit Multi-Cipher Cascade (AES-256-GCM + ChaCha20 + HMAC-SHA512)"
+        tvVaultStats.text = getString(R.string.vault_stats_active)
         tvEmptyVault.visibility = View.VISIBLE
     }
 }

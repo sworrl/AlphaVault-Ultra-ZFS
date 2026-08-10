@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AlphaVault Ultra</string>
+    <string name="brand_title">ALPHAVAULT ULTRA</string>
+
+    <!-- Main: badges -->
+    <string name="badge_cascade">CASCADE 768-BIT</string>
+    <string name="badge_decoy">DECOY MODE</string>
+
+    <!-- Main: vault panel -->
+    <string name="vault_banner_desc">Cyber vault banner</string>
+    <string name="vault_pool_title">WHOLE LIBRARY STORAGE POOL (RAID-Z2)</string>
+    <string name="vault_pool_subtitle">Maxed Out Cascade Encryption • 768-Bit Entropy (AES-256 + ChaCha20 + HMAC-SHA512) • Multi-Album Swap Proof</string>
+    <string name="pool_mode_auto">Auto-Pool Whole Music Library (Multi-Album Resilient)</string>
+    <string name="pool_mode_manual">Manual FLAC Disks Selection</string>
+    <string name="btn_encrypt_vault">+ ENCRYPT &amp; VAULT</string>
+    <string name="btn_auto_discover">🔍 AUTO-DISCOVER</string>
+    <string name="vault_files_header">VAULTED SENSITIVE FILES</string>
+    <string name="vault_empty">No vaulted files found.\nTap \'+ ENCRYPT &amp; VAULT\' to store sensitive files safely.</string>
+    <string name="vault_stats_decoy">0 Vault Files • Decoy Mode Active</string>
+    <string name="vault_stats_active">Whole Library Pool Active • 768-bit Multi-Cipher Cascade (AES-256-GCM + ChaCha20 + HMAC-SHA512)</string>
+
+    <!-- Main: stego panel -->
+    <string name="stego_title">FLAC Audio Stego Spectrum Visualizer</string>
+    <string name="btn_select_flac">🎵 SELECT CARRIER FLAC TRACK</string>
+    <string name="stego_none_selected">No FLAC track selected</string>
+    <string name="btn_inspect_track">INSPECT &amp; EXTRACT PAYLOAD</string>
+
+    <!-- Main: server panel -->
+    <string name="server_title">Wi-Fi External Web Server Sync</string>
+    <string name="server_desc">Enable this server to access your AlphaSteg vault from external web browsers over Wi-Fi.</string>
+    <string name="server_switch">Enable Web Sync Server</string>
+    <string name="server_status_stopped">Server Status: Stopped</string>
+    <string name="server_status_running">Maxed Out Cascade Encryption Active (768-bit)\nAES-256-GCM + ChaCha20 + HMAC-SHA512</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_vault">Vault Files</string>
+    <string name="nav_stego">Spectrum</string>
+    <string name="nav_server">Wi-Fi Sync</string>
+
+    <!-- Lock screen -->
+    <string name="lock_title_locked">ALPHAVAULT ULTRA // LOCKED</string>
+    <string name="lock_title_onboarding">ALPHAVAULT // ONBOARDING</string>
+    <string name="lock_status_bio">Primary Biometric Unlock Active • PIN Fallback Available</string>
+    <string name="lock_status_pin_only">Tap PIN digits to unlock</string>
+    <string name="lock_status_setup">Setup a master PIN for your FLAC Vault</string>
+    <string name="btn_bio_unlock">UNLOCK WITH FINGERPRINT / FACE</string>
+    <string name="btn_pin_fallback">UNLOCK WITH PIN (FALLBACK)</string>
+    <string name="btn_create_vault">CREATE MASTER VAULT</string>
+    <string name="key_bio">BIO</string>
+    <string name="key_backspace">⌫</string>
+</resources>

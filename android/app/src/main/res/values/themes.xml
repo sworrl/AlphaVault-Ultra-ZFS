@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.AlphaVault" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/av_cyan</item>
+        <item name="colorOnPrimary">@color/av_bg</item>
+        <item name="colorPrimaryContainer">@color/av_surface_raised</item>
+        <item name="colorOnPrimaryContainer">@color/av_cyan</item>
+        <item name="colorSecondary">@color/av_purple</item>
+        <item name="colorOnSecondary">@color/av_text_primary</item>
+        <item name="colorSecondaryContainer">@color/av_cyan_faint</item>
+        <item name="colorOnSecondaryContainer">@color/av_cyan</item>
+        <item name="android:colorBackground">@color/av_bg</item>
+        <item name="colorSurface">@color/av_surface</item>
+        <item name="colorOnSurface">@color/av_text_primary</item>
+        <item name="colorSurfaceVariant">@color/av_surface_raised</item>
+        <item name="colorOnSurfaceVariant">@color/av_text_secondary</item>
+        <item name="colorOutline">@color/av_stroke</item>
+        <item name="colorError">@color/av_danger</item>
+        <item name="android:windowBackground">@color/av_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="o_mr1">shortEdges</item>
+    </style>
+</resources>

@@ -29,8 +29,11 @@ class StegoVisualizerView @JvmOverloads constructor(
     private val barCount = 32
     private val barHeights = FloatArray(barCount)
 
+    private var animating = false
+
     private val animRunnable = object : Runnable {
         override fun run() {
+            if (!animating) return
             phase += 0.15f
             for (i in 0 until barCount) {
                 barHeights[i] = (sin(phase + i * 0.35f) * 0.4f + 0.5f) * height * 0.75f
@@ -40,8 +43,22 @@ class StegoVisualizerView @JvmOverloads constructor(
         }
     }
 
-    init {
+    private fun startAnimation() {
+        if (animating) return
+        animating = true
+        removeCallbacks(animRunnable)
         post(animRunnable)
+    }
+
+    private fun stopAnimation() {
+        animating = false
+        removeCallbacks(animRunnable)
+    }
+
+    // Only animate while actually shown — an invisible panel must not burn frames
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (isVisible) startAnimation() else stopAnimation()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -83,6 +100,6 @@ class StegoVisualizerView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        removeCallbacks(animRunnable)
+        stopAnimation()
     }
 }
