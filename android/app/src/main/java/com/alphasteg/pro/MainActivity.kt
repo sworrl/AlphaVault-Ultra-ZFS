@@ -26,6 +26,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.alphasteg.pro.data.FlacTrack
+import com.alphasteg.pro.data.VaultFs
 import com.alphasteg.pro.data.VaultLibrary
 import com.alphasteg.pro.data.VaultVolume
 import com.alphasteg.pro.engine.CryptoEngine
@@ -96,6 +97,14 @@ class MainActivity : AppCompatActivity() {
     private var vaultSortMode = SortMode.DATE
     private var vaultTagFilter: String? = null
     private var lastVaultEntries: List<VaultVolume.Entry> = emptyList()
+
+    // The mounted vault directory: the decrypted index held in memory for the
+    // unlock, plus the folder we are looking at. Folder and move edits mutate this
+    // in place (no crypto, no chunk I/O) and are flushed to the carriers once, on
+    // lock or backgrounding, like an unlocked LUKS volume.
+    private var vaultIndex: VaultVolume.Index = VaultVolume.Index(0, emptyList())
+    private var vaultCwd: String = "/"
+    private var vaultDirty = false
 
     // Cascade password for vaulted files: ONLY the user's code, passed by the
     // lock screen or calculator. No default key ever, so nothing is encrypted
@@ -845,7 +854,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Snapshot pending folder/move edits so a data op's internal loadIndex sees them.
+        val pendingFlush = if (vaultDirty) vaultIndex.copy(generation = vaultIndex.generation + 1) else null
+        vaultDirty = false
         Thread {
+            if (pendingFlush != null) runCatching { vaultVolume.commitIndex(pendingFlush, pool, key) }
             val result = runCatching { work(progress) }
             runOnUiThread {
                 runCatching { if (dialog.isShowing) dialog.dismiss() }
@@ -871,75 +884,318 @@ class MainActivity : AppCompatActivity() {
         return uri.lastPathSegment ?: "vaulted_file"
     }
 
+    /**
+     * Run a data operation that re-reads and re-writes the index internally (delete,
+     * scrub). Pending in-memory folder edits are flushed first so they are not
+     * overwritten, then the list repaints.
+     */
+    private fun runVaultDataOp(op: (List<java.io.File>) -> Unit) {
+        val pool = currentPool
+        val pendingFlush = if (vaultDirty) vaultIndex.copy(generation = vaultIndex.generation + 1) else null
+        vaultDirty = false
+        Thread {
+            if (pendingFlush != null) runCatching { vaultVolume.commitIndex(pendingFlush, pool, vaultPassword) }
+            runCatching { op(pool) }
+            runOnUiThread { refreshVaultUi() }
+        }.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Background or lock: flush the mounted index once, like syncing before unmount.
+        if (vaultDirty && !isDecoyMode) {
+            val pool = currentPool
+            val snapshot = vaultIndex.copy(generation = vaultIndex.generation + 1)
+            vaultIndex = snapshot
+            vaultDirty = false
+            Thread { runCatching { vaultVolume.commitIndex(snapshot, pool, vaultPassword) } }.start()
+        }
+    }
+
+    override fun onBackPressed() {
+        // In the vault, Back walks up the folder tree before leaving the screen.
+        if (::panelVault.isInitialized && panelVault.visibility == View.VISIBLE && vaultCwd != "/") {
+            openFolder(VaultFs.parent(vaultCwd))
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
+    }
+
     /** Read the encrypted volume index off the carriers and repaint the vault list + stats. */
     private fun refreshVaultUi() {
         if (isDecoyMode) {
-            renderVaultedRows(emptyList())
+            vaultIndex = VaultVolume.Index(0, emptyList())
+            lastVaultEntries = emptyList()
+            vaultCwd = "/"
+            renderCurrentFolder()
             vaultFileCount = 0; vaultOriginalBytes = 0; vaultStoredBytes = 0
             updateStorageBar(poolBytes, trackCount)
             return
         }
         val pool = currentPool
+        val pending = if (vaultDirty) vaultIndex.copy(generation = vaultIndex.generation + 1) else null
         Thread {
-            val entries = runCatching { vaultVolume.list(pool, vaultPassword) }.getOrDefault(emptyList())
+            // Persist pending folder/move edits before reloading so they survive.
+            if (pending != null) runCatching { vaultVolume.commitIndex(pending, pool, vaultPassword) }
+            val index = runCatching { vaultVolume.loadIndex(pool, vaultPassword) }
+                .getOrDefault(VaultVolume.Index(0, emptyList()))
             val stored = runCatching { vaultVolume.usageBytes(pool, vaultPassword) }.getOrDefault(0L)
             runOnUiThread {
-                vaultFileCount = entries.size
-                vaultOriginalBytes = entries.sumOf { it.originalSize }
+                vaultIndex = index
+                vaultDirty = false
+                lastVaultEntries = index.entries
+                vaultFileCount = index.entries.size
+                vaultOriginalBytes = index.entries.sumOf { it.originalSize }
                 vaultStoredBytes = stored
-                renderVaultedRows(entries)
+                if (VaultFs.allFolders(index).none { it == vaultCwd }) vaultCwd = "/"
+                renderCurrentFolder()
                 updateStorageBar(poolBytes, trackCount)
             }
         }.start()
     }
 
-    private fun renderVaultedRows(entries: List<VaultVolume.Entry>) {
-        lastVaultEntries = entries
-        for (i in vaultFileList.childCount - 1 downTo 0) {
-            if (vaultFileList.getChildAt(i) !== tvEmptyVault) {
-                vaultFileList.removeViewAt(i)
-            }
+    /** Render the current folder: breadcrumb, New Folder, subfolders, then files. */
+    private fun renderCurrentFolder() {
+        vaultFileList.removeAllViews()
+        tvEmptyVault.visibility = View.GONE
+
+        val listing = VaultFs.listing(vaultIndex, vaultCwd)
+        val filteredFiles = vaultTagFilter?.let { tag -> listing.files.filter { tag in it.tags } } ?: listing.files
+        val files = when (vaultSortMode) {
+            SortMode.DATE -> filteredFiles.sortedByDescending { it.createdAt }
+            SortMode.NAME -> filteredFiles.sortedBy { it.name.lowercase() }
+            SortMode.SIZE -> filteredFiles.sortedByDescending { it.originalSize }
         }
-        val filtered = vaultTagFilter?.let { tag -> entries.filter { tag in it.tags } } ?: entries
-        val sorted = when (vaultSortMode) {
-            SortMode.DATE -> filtered.sortedByDescending { it.createdAt }
-            SortMode.NAME -> filtered.sortedBy { it.name.lowercase() }
-            SortMode.SIZE -> filtered.sortedByDescending { it.originalSize }
-        }
+
         findViewById<TextView>(R.id.tvVaultSort).text = when {
-            entries.isEmpty() -> getString(R.string.vault_files_sub)
-            vaultTagFilter != null -> "#$vaultTagFilter · ${sorted.size} files · long-press to clear filter"
-            else -> "${entries.size} files · by ${vaultSortMode.label} · tap to sort, long-press to filter"
+            vaultTagFilter != null -> "#$vaultTagFilter · ${files.size} files · long-press to clear filter"
+            vaultIndex.entries.isEmpty() -> getString(R.string.vault_files_sub)
+            else -> "${listing.folders.size} folders · ${files.size} files · by ${vaultSortMode.label}"
         }
-        if (sorted.isEmpty()) {
-            tvEmptyVault.visibility = View.VISIBLE
+
+        vaultFileList.addView(buildBreadcrumbRow())
+        vaultFileList.addView(buildNewFolderRow())
+        for (folder in listing.folders) vaultFileList.addView(buildFolderRow(folder))
+        for (e in files) vaultFileList.addView(buildVaultedRow(e))
+
+        if (listing.folders.isEmpty() && files.isEmpty()) {
+            vaultFileList.addView(TextView(this).apply {
+                text = if (vaultCwd == "/") getString(R.string.vault_empty) else "This folder is empty."
+                setTextColor(0xFF7286A3.toInt())
+                textSize = 13f
+                setPadding(dp(12), dp(18), dp(12), dp(18))
+            })
+        }
+
+        // WinDirStat-style map of the current folder's files, colored by type.
+        if (files.isEmpty()) {
             vaultTreemap.visibility = View.GONE
             vaultTreemap.setItems(emptyList())
-            return
+        } else {
+            vaultTreemap.visibility = View.VISIBLE
+            vaultTreemap.setItems(files.map { e ->
+                com.alphasteg.pro.ui.TreemapView.Item(
+                    label = e.name.substringBeforeLast('.'),
+                    bytes = e.originalSize.coerceAtLeast(1),
+                    color = if (e.colorLabel != 0) e.colorLabel else kindOf(e.name).color,
+                    tag = e
+                )
+            })
+            vaultTreemap.onTileClick = { item ->
+                (item.tag as? VaultVolume.Entry)?.let { showVaultedFileMenu(it) }
+            }
         }
-        tvEmptyVault.visibility = View.GONE
-        for (e in sorted) vaultFileList.addView(buildVaultedRow(e))
+    }
 
-        // WinDirStat-style map of the vault: each file sized by original bytes,
-        // colored by type; tap a tile to open its menu.
-        vaultTreemap.visibility = View.VISIBLE
-        vaultTreemap.setItems(sorted.map { e ->
-            com.alphasteg.pro.ui.TreemapView.Item(
-                label = e.name.substringBeforeLast('.'),
-                bytes = e.originalSize.coerceAtLeast(1),
-                color = if (e.colorLabel != 0) e.colorLabel else kindOf(e.name).color,
-                tag = e
-            )
-        })
-        vaultTreemap.onTileClick = { item ->
-            (item.tag as? VaultVolume.Entry)?.let { showVaultedFileMenu(it) }
+    private fun buildBreadcrumbRow(): View {
+        val scroller = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
         }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        VaultFs.ancestors(vaultCwd).forEachIndexed { i, path ->
+            if (i > 0) row.addView(TextView(this).apply {
+                text = " › "; setTextColor(0xFF5A6B85.toInt()); textSize = 14f
+            })
+            row.addView(TextView(this).apply {
+                text = if (path == "/") "🔒 Vault" else VaultFs.baseName(path)
+                setTextColor(if (path == vaultCwd) 0xFF00F2FE.toInt() else 0xFF9FB2CC.toInt())
+                textSize = 14f
+                setPadding(dp(4), dp(6), dp(6), dp(6))
+                setOnClickListener { openFolder(path) }
+            })
+        }
+        scroller.addView(row)
+        return scroller
+    }
+
+    private fun buildNewFolderRow(): View = TextView(this).apply {
+        text = "＋  New folder"
+        setTextColor(0xFF2ECC71.toInt())
+        textSize = 14f
+        setPadding(dp(12), dp(10), dp(12), dp(10))
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(12).toFloat()
+            setColor(0xFF0A1120.toInt())
+            setStroke(dp(1) + 1, 0xFF223047.toInt())
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) }
+        setOnClickListener { promptNewFolder() }
+    }
+
+    private fun buildFolderRow(path: String): View {
+        val inner = VaultFs.listing(vaultIndex, path)
+        val count = inner.folders.size + inner.files.size
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(12), dp(14), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(0xFF0C1322.toInt())
+                setStroke(dp(1) + 1, 0xFFFFD93D.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+            setOnClickListener { openFolder(path) }
+            setOnLongClickListener { showFolderMenu(path); true }
+        }
+        row.addView(TextView(this).apply {
+            text = "📁"; textSize = 20f; gravity = Gravity.CENTER
+            val s = dp(44)
+            layoutParams = LinearLayout.LayoutParams(s, s).apply { marginEnd = dp(12) }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x33FFD93D)
+            }
+        })
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(this@MainActivity).apply {
+                text = VaultFs.baseName(path); setTextColor(0xFFEAF2FF.toInt()); textSize = 15f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = if (count == 0) "empty folder" else "$count item${if (count == 1) "" else "s"}"
+                setTextColor(0xFF8A9BB5.toInt()); textSize = 12f
+            })
+        })
+        row.addView(TextView(this).apply {
+            text = "›"; setTextColor(0xFF5A6B85.toInt()); textSize = 22f
+        })
+        return row
+    }
+
+    private fun openFolder(path: String) {
+        vaultCwd = VaultFs.normalize(path)
+        renderCurrentFolder()
+    }
+
+    private fun promptNewFolder() {
+        val input = android.widget.EditText(this).apply { hint = "Folder name" }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("New folder in ${if (vaultCwd == "/") "Vault" else VaultFs.baseName(vaultCwd)}")
+            .setView(input)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isEmpty()) return@setPositiveButton
+                vaultIndex = VaultFs.mkdir(vaultIndex, VaultFs.join(vaultCwd, name))
+                vaultDirty = true
+                renderCurrentFolder()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showFolderMenu(path: String) {
+        val options = arrayOf("Open", "Rename", "Move to…", "Delete folder")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(VaultFs.baseName(path))
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> openFolder(path)
+                    1 -> renameFolder(path)
+                    2 -> pickFolder("Move \"${VaultFs.baseName(path)}\" into…", exclude = { it == path || it.startsWith("$path/") || it == VaultFs.parent(path) }) { dest ->
+                        vaultIndex = VaultFs.moveFolder(vaultIndex, path, VaultFs.join(dest, VaultFs.baseName(path)))
+                        vaultDirty = true
+                        renderCurrentFolder()
+                    }
+                    3 -> deleteFolder(path)
+                }
+            }
+            .show()
+    }
+
+    private fun renameFolder(path: String) {
+        val input = android.widget.EditText(this).apply { setText(VaultFs.baseName(path)) }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Rename folder")
+            .setView(input)
+            .setPositiveButton("Rename") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isEmpty() || name == VaultFs.baseName(path)) return@setPositiveButton
+                vaultIndex = VaultFs.moveFolder(vaultIndex, path, VaultFs.join(VaultFs.parent(path), name))
+                vaultDirty = true
+                if (vaultCwd == path || vaultCwd.startsWith("$path/")) vaultCwd = "/"
+                renderCurrentFolder()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteFolder(path: String) {
+        runCatching { vaultIndex = VaultFs.rmdir(vaultIndex, path) }
+            .onSuccess {
+                vaultDirty = true
+                if (vaultCwd == path) vaultCwd = VaultFs.parent(path)
+                renderCurrentFolder()
+            }
+            .onFailure {
+                Toast.makeText(this, "Folder is not empty. Move or delete its contents first.", Toast.LENGTH_LONG).show()
+            }
+    }
+
+    /** Present a folder chooser (with an inline "New folder" option) and call [onPick]. */
+    private fun pickFolder(title: String, exclude: (String) -> Boolean = { false }, onPick: (String) -> Unit) {
+        val folders = VaultFs.allFolders(vaultIndex).filterNot(exclude).sorted()
+        val labels = (folders.map { if (it == "/") "🔒 Vault (root)" else it } + "＋ New folder…").toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(labels) { _, i ->
+                if (i == folders.size) {
+                    val input = android.widget.EditText(this).apply { hint = "Folder name" }
+                    androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("New folder")
+                        .setView(input)
+                        .setPositiveButton("Create") { _, _ ->
+                            val name = input.text.toString().trim()
+                            if (name.isEmpty()) return@setPositiveButton
+                            val p = VaultFs.join(vaultCwd, name)
+                            vaultIndex = VaultFs.mkdir(vaultIndex, p)
+                            vaultDirty = true
+                            onPick(p)
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                } else onPick(folders[i])
+            }
+            .show()
     }
 
     private fun cycleVaultSort() {
         val modes = SortMode.values()
         vaultSortMode = modes[(vaultSortMode.ordinal + 1) % modes.size]
-        renderVaultedRows(lastVaultEntries)
+        renderCurrentFolder()
     }
 
     private fun showTagFilterDialog() {
@@ -953,7 +1209,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Filter by tag")
             .setItems(options.toTypedArray()) { _, i ->
                 vaultTagFilter = if (vaultTagFilter != null && i == 0) null else options[i].removePrefix("#")
-                renderVaultedRows(lastVaultEntries)
+                renderCurrentFolder()
             }
             .show()
     }
@@ -1038,20 +1294,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVaultedFileMenu(file: VaultVolume.Entry) {
-        val options = arrayOf("View in app", "Rename", "Set color label", "Edit tags", "Restore to Downloads", "Delete from vault")
+        val options = arrayOf("View in app", "Move to…", "Rename", "Set color label", "Edit tags", "Restore to Downloads", "Delete from vault")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(file.name)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> viewVaultedFile(file)
-                    1 -> renameVaultedFile(file)
-                    2 -> pickColorLabel(file)
-                    3 -> editTags(file)
-                    4 -> restoreVaultedFile(file)
-                    5 -> confirmDeleteVaulted(file)
+                    1 -> moveFileTo(file)
+                    2 -> renameVaultedFile(file)
+                    3 -> pickColorLabel(file)
+                    4 -> editTags(file)
+                    5 -> restoreVaultedFile(file)
+                    6 -> confirmDeleteVaulted(file)
                 }
             }
             .show()
+    }
+
+    /** Move a file into another folder. Metadata only: no re-encryption, no chunk I/O. */
+    private fun moveFileTo(file: VaultVolume.Entry) {
+        pickFolder("Move \"${file.name}\" into…", exclude = { it == VaultFs.normalize(file.path) }) { dest ->
+            vaultIndex = VaultFs.move(vaultIndex, file.fileId, dest)
+            vaultDirty = true
+            renderCurrentFolder()
+            Toast.makeText(this, "Moved to ${if (dest == "/") "Vault" else VaultFs.baseName(dest)}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun editTags(file: VaultVolume.Entry) {
@@ -1063,12 +1330,12 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Tags for ${file.name}")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
-                val tags = input.text.toString().split(",")
-                val pool = currentPool
-                Thread {
-                    runCatching { vaultVolume.setTags(file.fileId, tags, vaultPassword, pool) }
-                    runOnUiThread { refreshVaultUi() }
-                }.start()
+                val clean = input.text.toString().split(",").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+                vaultIndex = vaultIndex.copy(entries = vaultIndex.entries.map {
+                    if (it.fileId == file.fileId) it.copy(tags = clean) else it
+                })
+                vaultDirty = true
+                renderCurrentFolder()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -1086,11 +1353,11 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Color label")
             .setItems(names) { _, i ->
                 val color = labelColors[i].first
-                val pool = currentPool
-                Thread {
-                    runCatching { vaultVolume.setColor(file.fileId, color, vaultPassword, pool) }
-                    runOnUiThread { refreshVaultUi() }
-                }.start()
+                vaultIndex = vaultIndex.copy(entries = vaultIndex.entries.map {
+                    if (it.fileId == file.fileId) it.copy(colorLabel = color) else it
+                })
+                vaultDirty = true
+                renderCurrentFolder()
             }
             .show()
     }
@@ -1106,11 +1373,9 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Rename") { _, _ ->
                 val newName = input.text.toString().trim()
                 if (newName.isEmpty() || newName == file.name) return@setPositiveButton
-                val pool = currentPool
-                Thread {
-                    runCatching { vaultVolume.rename(file.fileId, newName, vaultPassword, pool) }
-                    runOnUiThread { refreshVaultUi() }
-                }.start()
+                vaultIndex = VaultFs.rename(vaultIndex, file.fileId, newName)
+                vaultDirty = true
+                renderCurrentFolder()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -1155,11 +1420,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Delete from vault")
             .setMessage("Remove \"${file.name}\" from the carriers? This cannot be undone.")
             .setPositiveButton("Delete") { _, _ ->
-                val pool = currentPool
-                Thread {
-                    runCatching { vaultVolume.delete(file.fileId, vaultPassword, pool) }
-                    runOnUiThread { refreshVaultUi() }
-                }.start()
+                runVaultDataOp { pool -> vaultVolume.delete(file.fileId, vaultPassword, pool) }
             }
             .setNegativeButton("Cancel", null)
             .show()
