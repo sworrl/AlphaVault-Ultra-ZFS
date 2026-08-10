@@ -1,9 +1,17 @@
 package com.alphasteg.pro
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.provider.Settings
+import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -17,12 +25,21 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.alphasteg.pro.data.FlacTrack
+import com.alphasteg.pro.data.VaultLibrary
 import com.alphasteg.pro.engine.CryptoEngine
 import com.alphasteg.pro.engine.RaidVaultEngine
 import com.google.android.material.materialswitch.MaterialSwitch
+import java.io.File
 import java.io.InputStream
+import java.util.ArrayDeque
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+
+    private companion object {
+        private const val TAG = "AlphaVaultSync"
+    }
 
     private lateinit var topBar: View
     private lateinit var tvModeBadge: TextView
@@ -52,6 +69,22 @@ class MainActivity : AppCompatActivity() {
     private var isDecoyMode = false
     private var selectedCarrierUri: Uri? = null
     private var poolMode = RaidVaultEngine.PoolMode.AUTO_WHOLE_LIBRARY
+
+    private lateinit var library: VaultLibrary
+
+    private val requestAudioPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            syncLibrary(userTriggered = true)
+        } else {
+            Toast.makeText(
+                this,
+                "Audio access denied. Grant it to let AlphaVault find your FLAC tracks.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     private val selectFileToVaultLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
@@ -106,6 +139,8 @@ class MainActivity : AppCompatActivity() {
         switchServer = findViewById(R.id.switchServer)
         tvServerUrl = findViewById(R.id.tvServerUrl)
 
+        library = VaultLibrary(this)
+
         setupEdgeToEdgeInsets()
 
         if (isDecoyMode) {
@@ -117,7 +152,18 @@ class MainActivity : AppCompatActivity() {
         setupVaultActions()
         setupStegoInspector()
         setupWebSyncServer()
-        refreshVaultList()
+
+        // Show whatever the library already knew, then sync in the background.
+        renderLibrary(library.load().values.sortedBy { it.name.lowercase() })
+        autoSyncOnStartup()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Catch tracks added or removed while the app was backgrounded.
+        if (!isDecoyMode && hasAudioPermission()) {
+            syncLibrary(userTriggered = false)
+        }
     }
 
     private fun setupEdgeToEdgeInsets() {
@@ -172,9 +218,221 @@ class MainActivity : AppCompatActivity() {
             selectFileToVaultLauncher.launch("*/*")
         }
 
+        // Manual sync: same reconciliation the app runs at startup.
         btnScanVault.setOnClickListener {
-            Toast.makeText(this, "Scanning Music Library for FLAC tracks & hot spares...", Toast.LENGTH_SHORT).show()
-            refreshVaultList()
+            when {
+                hasAllFilesAccess() -> syncLibrary(userTriggered = true)
+                hasAudioPermission() -> {
+                    // MediaStore works, but offer full access so pending/foreign
+                    // tracks are also found.
+                    syncLibrary(userTriggered = true)
+                    if (canRequestAllFilesAccess()) promptAllFilesAccess()
+                }
+                canRequestAllFilesAccess() -> promptAllFilesAccess()
+                else -> requestAudioPermLauncher.launch(audioPermission())
+            }
+        }
+    }
+
+    private fun audioPermission(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, audioPermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()
+
+    private fun canRequestAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
+    private fun promptAllFilesAccess() {
+        Toast.makeText(
+            this,
+            "Grant \"All files access\" so AlphaVault can pool every FLAC track in your library.",
+            Toast.LENGTH_LONG
+        ).show()
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        }.onFailure {
+            runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+        }
+    }
+
+    private fun autoSyncOnStartup() {
+        if (isDecoyMode) return
+        when {
+            hasAllFilesAccess() || hasAudioPermission() -> syncLibrary(userTriggered = false)
+            else -> requestAudioPermLauncher.launch(audioPermission())
+        }
+    }
+
+    /**
+     * Scan the device for FLAC tracks off the main thread, reconcile against the
+     * stored library (new tracks added, vanished tracks flagged), then update the UI.
+     */
+    private fun syncLibrary(userTriggered: Boolean) {
+        Thread {
+            val scanned = queryFlacTracks()
+            val result = library.sync(scanned)
+            runOnUiThread {
+                renderLibrary(result.tracks)
+                val poolSize = formatSize(result.totalBytes)
+                tvVaultStats.text = getString(
+                    R.string.vault_stats_synced,
+                    result.tracks.size, poolSize
+                )
+                when {
+                    result.added.isNotEmpty() || result.removed.isNotEmpty() ->
+                        Toast.makeText(
+                            this,
+                            "Library synced: +${result.added.size} new, -${result.removed.size} missing (${result.tracks.size} tracks, $poolSize)",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    userTriggered ->
+                        Toast.makeText(
+                            this,
+                            "Library up to date: ${result.tracks.size} FLAC tracks ($poolSize)",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun queryFlacTracks(): List<FlacTrack> =
+        if (hasAllFilesAccess()) scanFilesystemForFlac() else queryFlacViaMediaStore()
+
+    /**
+     * Walk shared storage for .flac files directly. With All-Files access this
+     * sees every track on disk, including files MediaStore is still holding in a
+     * pending state or that another app owns.
+     */
+    private fun scanFilesystemForFlac(): List<FlacTrack> {
+        val out = mutableListOf<FlacTrack>()
+        // FLAC libraries live in the standard media folders; walking the whole
+        // volume is far too slow on a full DAC. Scan the music-bearing roots.
+        val roots = listOfNotNull(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PODCASTS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_ALARMS)
+        ).filter { it.isDirectory }
+
+        val stack = ArrayDeque<File>()
+        roots.forEach { stack.push(it) }
+        var dirs = 0
+        while (stack.isNotEmpty()) {
+            val dir = stack.pop()
+            val children = dir.listFiles() ?: continue
+            dirs++
+            for (f in children) {
+                if (f.isDirectory) {
+                    if (!f.name.startsWith(".")) stack.push(f)
+                } else if (f.name.endsWith(".flac", ignoreCase = true)) {
+                    out.add(FlacTrack(f.absolutePath, f.name, f.length()))
+                }
+            }
+        }
+        Log.i(TAG, "scanFilesystemForFlac: scanned $dirs dirs under media roots, found ${out.size} FLAC")
+        return out
+    }
+
+    private fun queryFlacViaMediaStore(): List<FlacTrack> {
+        val out = mutableListOf<FlacTrack>()
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.MIME_TYPE,
+            MediaStore.Audio.Media.RELATIVE_PATH
+        )
+        // No SQL selection: MediaProvider on Android 14 silently filters some
+        // OR/IN clauses to zero rows. Pull all audio (a small set) and filter here.
+        try {
+            contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection, null, null,
+                "${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
+            )?.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val nameIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+                val sizeIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+                val mimeIdx = c.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
+                val relIdx = c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                Log.i(TAG, "queryFlacTracks: total audio rows=${c.count}")
+                while (c.moveToNext()) {
+                    val name = c.getString(nameIdx) ?: continue
+                    val mime = if (mimeIdx >= 0) c.getString(mimeIdx) ?: "" else ""
+                    val isFlac = name.endsWith(".flac", ignoreCase = true) ||
+                        mime == "audio/flac" || mime == "audio/x-flac"
+                    if (!isFlac) continue
+                    val rel = if (relIdx >= 0) c.getString(relIdx) ?: "" else ""
+                    val id = c.getLong(idIdx)
+                    val path = "${rel}$name".ifBlank { "content://$id" }
+                    out.add(FlacTrack(path, name, c.getLong(sizeIdx)))
+                }
+            } ?: Log.w(TAG, "queryFlacTracks: null cursor")
+        } catch (e: Exception) {
+            Log.e(TAG, "queryFlacTracks failed", e)
+        }
+        Log.i(TAG, "queryFlacTracks: returning ${out.size} FLAC tracks")
+        return out
+    }
+
+    private fun renderLibrary(tracks: List<FlacTrack>) {
+        // Remove any previously rendered rows, keep the empty-state placeholder.
+        for (i in vaultFileList.childCount - 1 downTo 0) {
+            if (vaultFileList.getChildAt(i) !== tvEmptyVault) {
+                vaultFileList.removeViewAt(i)
+            }
+        }
+        if (tracks.isEmpty()) {
+            tvEmptyVault.visibility = View.VISIBLE
+            return
+        }
+        tvEmptyVault.visibility = View.GONE
+        for (t in tracks) {
+            vaultFileList.addView(buildTrackRow(t))
+        }
+    }
+
+    private fun buildTrackRow(track: FlacTrack): View {
+        val row = TextView(this)
+        val pad = dp(14)
+        row.setPadding(pad, pad, pad, pad)
+        row.setBackgroundResource(R.drawable.bg_cyber_card)
+        row.setTextColor(ContextCompat.getColor(this, R.color.av_text_primary))
+        row.textSize = 13f
+        val folder = track.folder.ifEmpty { "Music" }
+        row.text = "🎵 ${track.name}\n${formatSize(track.size)} · $folder"
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) }
+        row.layoutParams = lp
+        return row
+    }
+
+    private fun dp(value: Int): Int = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics
+    ).toInt()
+
+    private fun formatSize(bytes: Long): String {
+        val mb = bytes / (1024.0 * 1024.0)
+        return if (mb >= 1024) {
+            String.format(Locale.US, "%.2f GB", mb / 1024.0)
+        } else {
+            String.format(Locale.US, "%.1f MB", mb)
         }
     }
 
@@ -248,11 +506,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshVaultList() {
         if (isDecoyMode) {
+            renderLibrary(emptyList())
             tvVaultStats.text = getString(R.string.vault_stats_decoy)
-            tvEmptyVault.visibility = View.VISIBLE
             return
         }
-        tvVaultStats.text = getString(R.string.vault_stats_active)
-        tvEmptyVault.visibility = View.VISIBLE
+        if (hasAudioPermission()) {
+            syncLibrary(userTriggered = false)
+        } else {
+            tvVaultStats.text = getString(R.string.vault_stats_active)
+        }
     }
 }

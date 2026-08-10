@@ -14,11 +14,12 @@
     <string name="pool_mode_auto">Auto-Pool Whole Music Library (Multi-Album Resilient)</string>
     <string name="pool_mode_manual">Manual FLAC Disks Selection</string>
     <string name="btn_encrypt_vault">+ ENCRYPT &amp; VAULT</string>
-    <string name="btn_auto_discover">🔍 AUTO-DISCOVER</string>
+    <string name="btn_auto_discover">🔄 SYNC LIBRARY</string>
     <string name="vault_files_header">VAULTED SENSITIVE FILES</string>
     <string name="vault_empty">No vaulted files found.\nTap \'+ ENCRYPT &amp; VAULT\' to store sensitive files safely.</string>
     <string name="vault_stats_decoy">0 Vault Files • Decoy Mode Active</string>
     <string name="vault_stats_active">Whole Library Pool Active • 768-bit Multi-Cipher Cascade (AES-256-GCM + ChaCha20 + HMAC-SHA512)</string>
+    <string name="vault_stats_synced">%1$d FLAC tracks • %2$s pool • RAID-Z2 ready</string>
 
     <!-- Main: stego panel -->
     <string name="stego_title">FLAC Audio Stego Spectrum Visualizer</string>
