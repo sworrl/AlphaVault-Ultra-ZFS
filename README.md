@@ -50,7 +50,7 @@ This repository is a fork of [bennjordan/AlphaSteg](https://github.com/bennjorda
 
 ## Status: what works and what does not
 
-Verified by hand on a Pixel-class device running Android 14. Everything else in this README describes code that exists in the repo but has not been run end to end.
+Verified on a Pixel-class device running Android 14, and by unit tests where noted. Everything else in this README describes code that exists in the repo but has not been run end to end.
 
 **Tested and working**
 
@@ -58,14 +58,13 @@ Verified by hand on a Pixel-class device running Android 14. Everything else in 
 - The UI renders: floating navigation dock, the three panels, and a full-bleed adaptive launcher icon.
 - FLAC library sync. On startup and on a manual **Sync Library** tap, the app scans the standard media folders for `.flac` files and lists them as pool disks. Verified with 24 tracks across two albums.
 - The storage bar. Used and free device space plus total FLAC pool size, read from `StatFs`.
+- The vault round trip: plaintext to 768-bit cascade encryption to RAID-Z2 chunking to reconstruction to decryption. Proven by `VaultRoundTripTest` (5 passing tests), which also confirms single-chunk parity recovery and that a wrong password is rejected by the HMAC before decryption.
+- **Encrypt & Vault** persists. Picking a file encrypts it, splits it into RAID chunks, and writes those chunks plus a manifest to app-private storage; the file then appears under **Vaulted Files**. Tapping a vaulted file reconstructs, decrypts, and writes the original back to Downloads.
 
 **Written but not yet verified end to end**
 
-- The 768-bit cascade encrypt and decrypt round trip (`CryptoEngine`).
-- RAID-Z2 chunking and reconstruction (`RaidVaultEngine`).
-- LSB embed and extract into real FLAC carriers (`LsbStegoEngine`).
+- LSB embed and extract into real FLAC carriers (`LsbStegoEngine`). Vaulted chunks currently live in the app's private vault store, not yet hidden inside the audio of the FLAC pool.
 - Biometric unlock and the decoy PIN (`LockScreenActivity`, `SecurityManager`).
-- The **Encrypt & Vault** action. It currently encrypts the file and computes RAID chunks in memory, then shows a summary. It does not yet write those chunks into FLAC tracks or persist a vaulted-file record, so nothing is stored on disk yet.
 - The Android **Wi-Fi Sync** switch. It starts a foreground service with a notification; there is no HTTP server behind it yet.
 - The spectrum visualizer draws, but it is decorative and not tied to real audio.
 
@@ -182,7 +181,13 @@ Planned, not yet built:
 - **Duress by fingerprint has a platform limit worth stating up front.** Android's `BiometricPrompt` reports only that *a* enrolled fingerprint matched. It does not tell the app *which* finger authenticated. So "use this specific finger as a duress trigger" cannot be built on the standard biometric API; the OS never exposes finger identity. A duress PIN or pattern is the workable path. A fingerprint-based duress would need a non-standard sensor integration that most devices do not offer.
 - **Disguise mode.** Present the app under an innocuous name and icon (a calculator, for example) using Android activity-alias entries that can be switched at runtime.
 - **Server-linked libraries.** A desktop-side companion so a phone or DAC can sync FLAC carriers to and from a home server for backup and offload, rather than transferring by hand.
-- **Finish the vault path.** Wire **Encrypt & Vault** through to actually writing RAID chunks into FLAC carriers and recording vaulted-file entries, then verify decrypt and reconstruction on real files.
+- **Embed chunks into real FLAC carriers.** The vault store persists chunks today; the next step hides each chunk inside the audio of a FLAC track in the pool, using `LsbStegoEngine`, so the carriers are the storage.
+- **Spread chunks across the library.** Distribute a file's chunks evenly across different artists, albums, and genres, so swapping or deleting one album cannot take out enough chunks to lose data.
+- **Secure in-app viewers.** Open vaulted files without writing plaintext to disk: an audio player, image viewer, document and text viewer, and so on, reading decrypted bytes from memory.
+- **Mandatory duress code at onboarding.** Setup requires both a master PIN or pattern and a distinct duress code; entering the duress code wipes keys and vaulted data. Biometric unlock is being removed for now, since Android cannot tie a duress action to a specific finger.
+- **Disk view like a RAID manager.** Present the FLAC carriers the way a Linux or Windows RAID tool shows an array: per-disk usage, role, and health.
+- **Disguise mode.** Present the app under an innocuous name and icon.
+- **Server-linked libraries.** A desktop companion so a phone or DAC can back up and offload carriers to and from a home server.
 
 ## Project layout
 
