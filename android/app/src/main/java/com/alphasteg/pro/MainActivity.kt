@@ -30,7 +30,6 @@ import com.alphasteg.pro.data.VaultLibrary
 import com.alphasteg.pro.data.VaultVolume
 import com.alphasteg.pro.engine.CryptoEngine
 import com.alphasteg.pro.engine.RaidVaultEngine
-import com.alphasteg.pro.ui.DiskArrayView
 import com.google.android.material.materialswitch.MaterialSwitch
 import java.io.File
 import java.io.InputStream
@@ -47,9 +46,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvModeBadge: TextView
     private lateinit var tvVaultStats: TextView
     private lateinit var tvStorageDetail: TextView
-    private lateinit var barUsed: View
-    private lateinit var barFree: View
-    private lateinit var diskArray: com.alphasteg.pro.ui.DiskArrayView
+    private lateinit var partitionBar: com.alphasteg.pro.ui.PartitionBarView
+    private lateinit var treemap: com.alphasteg.pro.ui.TreemapView
     private lateinit var tvEmptyDisks: TextView
     private lateinit var tvEmptyVault: TextView
     private lateinit var vaultFileList: LinearLayout
@@ -145,7 +143,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         // Hardening: block screenshots, screen recording, and recents thumbnails.
-        window.setFlags(
+        if (!BuildConfig.ALLOW_SCREENSHOTS) window.setFlags(
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
             android.view.WindowManager.LayoutParams.FLAG_SECURE
         )
@@ -165,9 +163,8 @@ class MainActivity : AppCompatActivity() {
         tvModeBadge = findViewById(R.id.tvModeBadge)
         tvVaultStats = findViewById(R.id.tvVaultStats)
         tvStorageDetail = findViewById(R.id.tvStorageDetail)
-        barUsed = findViewById(R.id.barUsed)
-        barFree = findViewById(R.id.barFree)
-        diskArray = findViewById(R.id.diskArray)
+        partitionBar = findViewById(R.id.partitionBar)
+        treemap = findViewById(R.id.treemap)
         tvEmptyDisks = findViewById(R.id.tvEmptyDisks)
         tvEmptyVault = findViewById(R.id.tvEmptyVault)
         vaultFileList = findViewById(R.id.vaultFileList)
@@ -518,23 +515,23 @@ class MainActivity : AppCompatActivity() {
     private fun renderPoolDisks(tracks: List<FlacTrack>) {
         if (tracks.isEmpty()) {
             tvEmptyDisks.visibility = View.VISIBLE
-            diskArray.visibility = View.GONE
-            diskArray.setDisks(emptyList())
+            treemap.visibility = View.GONE
+            treemap.setItems(emptyList())
             return
         }
         tvEmptyDisks.visibility = View.GONE
-        diskArray.visibility = View.VISIBLE
-        val maxSize = tracks.maxOf { it.size }.coerceAtLeast(1L)
-        val disks = tracks.mapIndexed { i, t ->
-            val color = android.graphics.Color.HSVToColor(floatArrayOf(i * 360f / tracks.size, 0.62f, 1f))
-            DiskArrayView.Disk(
+        treemap.visibility = View.VISIBLE
+        // Color each carrier by its album folder, so an album reads as one hue.
+        val folders = tracks.map { it.folder }.distinct()
+        val items = tracks.map { t ->
+            val hue = folders.indexOf(t.folder) * 360f / folders.size.coerceAtLeast(1)
+            com.alphasteg.pro.ui.TreemapView.Item(
                 label = t.name.substringBeforeLast('.'),
-                sub = "${t.folder.ifEmpty { "Music" }} · ${formatSize(t.size)}",
-                usedFraction = (t.size.toFloat() / maxSize).coerceIn(0.05f, 1f),
-                color = color
+                bytes = t.size,
+                color = android.graphics.Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f))
             )
         }
-        diskArray.setDisks(disks)
+        treemap.setItems(items)
     }
 
     /**
@@ -548,12 +545,16 @@ class MainActivity : AppCompatActivity() {
         val available = stat.availableBytes
         val used = (total - available).coerceAtLeast(0)
 
-        // Weights: used slice vs free slice of the whole device volume.
-        val usedW = if (total > 0) used.toFloat() / total else 0f
-        (barUsed.layoutParams as LinearLayout.LayoutParams).weight = usedW
-        (barFree.layoutParams as LinearLayout.LayoutParams).weight = (1f - usedW).coerceAtLeast(0f)
-        barUsed.requestLayout()
-        barFree.requestLayout()
+        // GParted-style allocation: other-used, music pool, vault, free.
+        val otherUsed = (used - poolBytes).coerceAtLeast(0L)
+        partitionBar.setSegments(
+            listOf(
+                com.alphasteg.pro.ui.PartitionBarView.Segment("System / other", otherUsed, 0xFF3A4a63.toInt()),
+                com.alphasteg.pro.ui.PartitionBarView.Segment("Music pool", poolBytes, 0xFF00F2FE.toInt()),
+                com.alphasteg.pro.ui.PartitionBarView.Segment("Vault", vaultStoredBytes, 0xFF9D4EDD.toInt()),
+                com.alphasteg.pro.ui.PartitionBarView.Segment("Free", available, 0xFF17324a.toInt())
+            )
+        )
 
         tvStorageDetail.text = buildString {
             append(String.format(Locale.US, "Device: %s used of %s\n", formatSize(used), formatSize(total)))

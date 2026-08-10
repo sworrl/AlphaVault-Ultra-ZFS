@@ -15,6 +15,12 @@ android {
         versionName "1.0.0-Ultra-ZFS"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // Screenshots/screen recording are blocked by FLAG_SECURE unless this is
+        // set. Build with -PallowScreenshots to produce a capturable build for
+        // docs; normal builds stay secure.
+        buildConfigField "boolean", "ALLOW_SCREENSHOTS",
+            (project.hasProperty("allowScreenshots") ? "true" : "false")
     }
 
     buildTypes {
@@ -45,6 +51,7 @@ android {
     }
     buildFeatures {
         viewBinding true
+        buildConfig true
     }
 }
 
