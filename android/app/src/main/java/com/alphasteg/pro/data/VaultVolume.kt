@@ -36,10 +36,22 @@ class VaultVolume {
         val numData: Int,
         val createdAt: Long,
         val colorLabel: Int = 0,        // 0 = none; otherwise an ARGB color the user assigned
-        val tags: List<String> = emptyList()
+        val tags: List<String> = emptyList(),
+        val path: String = "/"          // folder this file lives in; "/" is the vault root
     )
 
-    data class Index(val generation: Long, val entries: List<Entry>)
+    /**
+     * The whole vault directory in one object. [folders] holds explicitly created
+     * folders (so an empty folder persists); a file's own [Entry.path] also implies
+     * its ancestor folders. Reorganizing the tree only rewrites this index, never
+     * the data chunks, so a move is a metadata edit, like moving a file inside an
+     * unlocked LUKS volume.
+     */
+    data class Index(
+        val generation: Long,
+        val entries: List<Entry>,
+        val folders: List<String> = emptyList()
+    )
 
     data class ScrubReport(val filesChecked: Int, val chunksHealed: Int, val filesUnrecoverable: List<String>)
 
@@ -136,10 +148,22 @@ class VaultVolume {
             raid.chunkSize, raid.totalLength, DATA_CHUNKS, createdAt
         )
         val current = loadIndex(pool, password)
-        saveIndex(Index(current.generation + 1, current.entries + entry), pool, password, progress, raid.chunks.size, total)
+        saveIndex(
+            current.copy(generation = current.generation + 1, entries = current.entries + entry),
+            pool, password, progress, raid.chunks.size, total
+        )
         progress.update(total, total, "Done.")
         return entry
     }
+
+    /**
+     * Persist an already-built index (bumping its generation is the caller's job).
+     * Used by [VaultSession] to flush a batch of in-memory folder/move edits once,
+     * on lock, instead of after every operation.
+     */
+    @JvmOverloads
+    fun commitIndex(index: Index, pool: List<File>, password: String, progress: Progress = noProgress) =
+        saveIndex(index, pool, password, progress, 0, 1)
 
     private fun gatherChunks(fileId: String, expectedCount: Int, pool: List<File>): Map<Int, ByteArray> {
         val perFile = parallelMap(pool) { f ->
@@ -203,14 +227,14 @@ class VaultVolume {
     fun rename(fileId: String, newName: String, password: String, pool: List<File>) {
         val current = loadIndex(pool, password)
         val updated = current.entries.map { if (it.fileId == fileId) it.copy(name = newName) else it }
-        saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
+        saveIndex(current.copy(generation = current.generation + 1, entries = updated), pool, password, noProgress, 0, 1)
     }
 
     /** Assign (or clear, with 0) a color label to a vaulted file. */
     fun setColor(fileId: String, color: Int, password: String, pool: List<File>) {
         val current = loadIndex(pool, password)
         val updated = current.entries.map { if (it.fileId == fileId) it.copy(colorLabel = color) else it }
-        saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
+        saveIndex(current.copy(generation = current.generation + 1, entries = updated), pool, password, noProgress, 0, 1)
     }
 
     /** Replace the tags on a vaulted file. */
@@ -218,7 +242,7 @@ class VaultVolume {
         val clean = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         val current = loadIndex(pool, password)
         val updated = current.entries.map { if (it.fileId == fileId) it.copy(tags = clean) else it }
-        saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
+        saveIndex(current.copy(generation = current.generation + 1, entries = updated), pool, password, noProgress, 0, 1)
     }
 
     fun delete(fileId: String, password: String, pool: List<File>) {
@@ -229,7 +253,10 @@ class VaultVolume {
             }
         }
         val current = loadIndex(pool, password)
-        saveIndex(Index(current.generation + 1, current.entries.filterNot { it.fileId == fileId }), pool, password, noProgress, 0, 1)
+        saveIndex(
+            current.copy(generation = current.generation + 1, entries = current.entries.filterNot { it.fileId == fileId }),
+            pool, password, noProgress, 0, 1
+        )
     }
 
     /** Duress wipe: strip every AlphaVault block (index and chunks) from all carriers. */
@@ -314,9 +341,14 @@ class VaultVolume {
                 put("totalLen", e.totalLen); put("numData", e.numData); put("createdAt", e.createdAt)
                 put("colorLabel", e.colorLabel)
                 put("tags", JSONArray(e.tags))
+                put("path", e.path)
             })
         }
-        return JSONObject().put("generation", index.generation).put("entries", arr).toString()
+        return JSONObject()
+            .put("generation", index.generation)
+            .put("entries", arr)
+            .put("folders", JSONArray(index.folders))
+            .toString()
     }
 
     private fun parseIndex(generation: Long, json: ByteArray): Index {
@@ -330,11 +362,15 @@ class VaultVolume {
                     o.getString("fileId"), o.getString("name"), o.getLong("originalSize"),
                     o.getInt("chunkCount"), o.getInt("chunkSize"), o.getInt("totalLen"),
                     o.getInt("numData"), o.getLong("createdAt"), o.optInt("colorLabel", 0),
-                    o.optJSONArray("tags")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
+                    o.optJSONArray("tags")?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList(),
+                    VaultFs.normalize(o.optString("path", "/"))
                 )
             )
         }
-        return Index(generation, entries)
+        val folders = obj.optJSONArray("folders")
+            ?.let { arr -> (0 until arr.length()).map { VaultFs.normalize(arr.getString(it)) } }
+            ?: emptyList()
+        return Index(generation, entries, folders)
     }
 
     private fun extractOrEmpty(file: File): List<ByteArray> =

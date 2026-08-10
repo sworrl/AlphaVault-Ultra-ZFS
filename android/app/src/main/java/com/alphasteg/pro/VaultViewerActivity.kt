@@ -103,16 +103,12 @@ class VaultViewerActivity : AppCompatActivity() {
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             ?: return message("Could not decode this image.")
 
-        val scroll = ScrollView(this)
-        val iv = ImageView(this).apply {
+        // Pinch to zoom, drag to pan, double-tap to zoom in/out. The view fills the
+        // space and handles its own panning, so no surrounding ScrollView.
+        return com.alphasteg.pro.ui.ZoomableImageView(this).apply {
             setImageBitmap(bmp)
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         }
-        scroll.addView(iv)
-        scroll.layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
-        return scroll
     }
 
     /** Video plays from an in-memory data source onto a secure surface, with a
