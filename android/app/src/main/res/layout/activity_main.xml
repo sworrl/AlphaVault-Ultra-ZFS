@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#050811">
+
+    <!-- Top Action Bar (Cutout Aware with Bottom Cyan Line) -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:background="@drawable/bg_top_bar_glass"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="20dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="12dp">
+
+        <ImageView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginEnd="12dp"
+            android:src="@drawable/ic_launcher" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="ALPHAVAULT ULTRA // ZFS"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvModeBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_cyber_card"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="6dp"
+            android:text="CASCADE 768-BIT"
+            android:textColor="#00F2FE"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Main View Pager / Container -->
+    <FrameLayout
+        android:id="@+id/fragmentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@id/floatingDockContainer"
+        android:layout_below="@id/topBar">
+
+        <!-- Vault Panel (Default View) -->
+        <ScrollView
+            android:id="@+id/panelVault"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <!-- Header Cyber Vault Banner -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="140dp"
+                    android:layout_marginBottom="16dp"
+                    app:cardCornerRadius="16dp"
+                    app:strokeColor="#00F2FE"
+                    app:strokeWidth="1dp">
+
+                    <ImageView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
+                        android:src="@drawable/cyber_vault_banner" />
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- RAID-Z2 & Hot Spare Pool Glass Card -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    android:background="@drawable/bg_cyber_card"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="WHOLE LIBRARY STORAGE POOL (RAID-Z2)"
+                        android:textColor="#FFFFFF"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvVaultStats"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Maxed Out Cascade Encryption • 768-Bit Entropy (AES-256 + ChaCha20 + HMAC-SHA512) • Multi-Album Swap Proof"
+                        android:textColor="#00F2FE"
+                        android:textSize="12sp" />
+
+                    <!-- Pool Mode Radio Selector -->
+                    <RadioGroup
+                        android:id="@+id/rgPoolMode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="vertical">
+
+                        <RadioButton
+                            android:id="@+id/rbAutoLibrary"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="true"
+                            android:text="Auto-Pool Whole Music Library (Multi-Album Resilient)"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+
+                        <RadioButton
+                            android:id="@+id/rbManualDisks"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Manual FLAC Disks Selection"
+                            android:textColor="#8F9CAE"
+                            android:textSize="13sp" />
+                    </RadioGroup>
+
+                </LinearLayout>
+
+                <!-- Vault Actions -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnAddVaultFile"
+                        android:layout_width="0dp"
+                        android:layout_height="52dp"
+                        android:layout_marginEnd="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_neon_button"
+                        android:text="+ ENCRYPT &amp; VAULT"
+                        android:textColor="#050811"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/btnScanVault"
+                        android:layout_width="0dp"
+                        android:layout_height="52dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_keypad_button"
+                        android:text="🔍 AUTO-DISCOVER"
+                        android:textColor="#00F2FE"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- Vault File List Header -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:text="VAULTED SENSITIVE FILES"
+                    android:textColor="#00F2FE"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <!-- List View for Vaulted Files -->
+                <LinearLayout
+                    android:id="@+id/vaultFileList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvEmptyVault"
+                        android:layout_width="match_parent"
+                        android:layout_height="100dp"
+                        android:background="@drawable/bg_cyber_card"
+                        android:gravity="center"
+                        android:text="No vaulted files found.\nTap '+ ENCRYPT &amp; VAULT' to store sensitive files safely."
+                        android:textColor="#4A5568"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- Stego Inspector Panel with 60 FPS Visualizer -->
+        <ScrollView
+            android:id="@+id/panelStego"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="FLAC Audio Stego Spectrum Visualizer"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <!-- Custom 60 FPS Stego Visualizer View -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="160dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="16dp"
+                    app:cardCornerRadius="16dp"
+                    app:strokeColor="#00F2FE"
+                    app:strokeWidth="1.5dp">
+
+                    <com.alphasteg.pro.ui.StegoVisualizerView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="#0A101D" />
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <Button
+                    android:id="@+id/btnSelectFlac"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginBottom="12dp"
+                    android:background="@drawable/bg_keypad_button"
+                    android:text="🎵 SELECT CARRIER FLAC TRACK"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSelectedFlac"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_cyber_card"
+                    android:padding="14dp"
+                    android:text="No FLAC track selected"
+                    android:textColor="#8F9CAE" />
+
+                <Button
+                    android:id="@+id/btnInspectTrack"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/bg_neon_button"
+                    android:text="INSPECT &amp; EXTRACT PAYLOAD"
+                    android:textColor="#050811"
+                    android:textStyle="bold" />
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- Server Panel -->
+        <LinearLayout
+            android:id="@+id/panelServer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="24dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wi-Fi External Web Server Sync"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="24dp"
+                android:text="Enable this server to access your AlphaSteg vault from external web browsers over Wi-Fi."
+                android:textColor="#8F9CAE"
+                android:textSize="13sp" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switchServer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Enable Web Sync Server"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/tvServerUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_cyber_card"
+                android:fontFamily="monospace"
+                android:padding="16dp"
+                android:text="Server Status: Stopped"
+                android:textColor="#00F2FE"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- Floating Cyber Glass Dock Capsule Container -->
+    <FrameLayout
+        android:id="@+id/floatingDockContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="20dp">
+
+        <com.google.android.material.bottomnavigation.BottomNavigationView
+            android:id="@+id/bottomNav"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:background="@drawable/bg_floating_dock"
+            android:elevation="12dp"
+            app:itemIconTint="@color/nav_item_color"
+            app:itemTextColor="@color/nav_item_color"
+            app:menu="@menu/bottom_nav_menu" />
+
+    </FrameLayout>
+
+</RelativeLayout>

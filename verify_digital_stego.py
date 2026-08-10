@@ -47,7 +47,7 @@ def main():
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
-    time.sleep(2.5) # Wait for startup
+    time.sleep(3.5) # Wait for startup
     
     try:
         # 1. Test Digital LSB Encoding
@@ -119,8 +119,40 @@ def main():
             print(f"MFSK ({preset}) decoded payload length:", len(decoded_content))
             assert decoded_content == secret_content, f"MFSK ({preset}) payload corrupted!"
             print(f"MFSK ({preset}) payload content verification: MATCH")
-        
-        print("\nAll digital file methods, scanning, password encryption, and majority-voting checksums passed successfully!")
+
+        # 5. Test AES-256 Encrypted Secret Text Payload with LSB
+        print("\n--- Testing AES-256 Encrypted Text Note Payload (LSB) ---")
+        secret_note = "Top Secret AES-256-GCM Encrypted Steganographic Message #99!"
+        with open(carrier_path, 'rb') as c_file:
+            files = {'carrier': c_file}
+            data = {
+                'alpha': 0.05,
+                'method': 'lsb',
+                'text_payload': secret_note,
+                'password': 'SuperSecretPassword456!'
+            }
+            r_enc_aes = requests.post("http://127.0.0.1:8000/api/encode", files=files, data=data)
+        r_enc_aes.raise_for_status()
+        aes_res = r_enc_aes.json()
+        print("AES-256 LSB encode response:", aes_res)
+
+        # Test Decryption with correct password
+        print("Testing AES-256 text note decryption with correct password...")
+        r_dec_aes = requests.get(f"http://127.0.0.1:8000/api/decode_file?url={aes_res['stream_url']}&method=lsb&password=SuperSecretPassword456!&as_json=true")
+        r_dec_aes.raise_for_status()
+        json_res = r_dec_aes.json()
+        print("Decoded text JSON response:", json_res)
+        assert json_res["is_text"] is True, "Expected is_text=True"
+        assert json_res["text"] == secret_note, f"Expected {secret_note}, got {json_res['text']}"
+        print("AES-256 encrypted text payload verification: MATCH")
+
+        # Test Decryption with wrong password (should fail)
+        print("Testing AES-256 decryption with WRONG password (expecting error 400)...")
+        r_fail = requests.get(f"http://127.0.0.1:8000/api/decode_file?url={aes_res['stream_url']}&method=lsb&password=WrongPassword123!&as_json=true")
+        assert r_fail.status_code == 400, f"Expected status 400, got {r_fail.status_code}"
+        print("AES-256 wrong password check: REJECTED AS EXPECTED")
+
+        print("\nAll digital file methods, scanning, AES-256 encryption, text notes, and checksums passed successfully!")
         print("PASS")
         
     except Exception as e:
@@ -140,3 +172,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

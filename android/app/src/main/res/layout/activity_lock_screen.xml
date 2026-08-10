@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/lockRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#050811"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingStart="20dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="12dp">
+
+    <!-- Top Cyber Vault Banner Card (Compact 120dp) -->
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:layout_marginBottom="10dp"
+        app:cardCornerRadius="16dp"
+        app:strokeColor="#00F2FE"
+        app:strokeWidth="1.5dp">
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:src="@drawable/cyber_vault_banner" />
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="ALPHAVAULT ULTRA // LOCK"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:layout_marginBottom="8dp"
+        android:gravity="center"
+        android:text="Randomized PIN Keypad • Biometric Unlock Active"
+        android:textColor="#8F9CAE"
+        android:textSize="11sp" />
+
+    <!-- PIN Dots Neon Box -->
+    <TextView
+        android:id="@+id/tvPinDisplay"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/bg_cyber_card"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:letterSpacing="0.4"
+        android:text=""
+        android:textColor="#00F2FE"
+        android:textSize="24sp" />
+
+    <!-- Compact Keypad Grid (Fits 100% On Screen) -->
+    <GridLayout
+        android:id="@+id/keypadGrid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:alignmentMode="alignMargins"
+        android:columnCount="3"
+        android:rowCount="4"
+        android:useDefaultMargins="true">
+
+        <Button
+            android:id="@+id/btnKey1"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="1"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey2"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="2"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey3"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="3"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey4"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="4"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey5"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="5"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey6"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="6"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey7"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="7"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey8"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="8"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey9"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="9"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKeyBio"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="BIO"
+            android:textColor="#00F2FE"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKey0"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="0"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnKeyClear"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_columnWeight="1"
+            android:background="@drawable/bg_keypad_button"
+            android:text="⌫"
+            android:textColor="#FF4D4D"
+            android:textSize="20sp" />
+
+    </GridLayout>
+
+    <!-- Glowing Action Button -->
+    <Button
+        android:id="@+id/btnSubmit"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_neon_button"
+        android:text="UNLOCK VAULT"
+        android:textColor="#050811"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

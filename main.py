@@ -6,16 +6,21 @@ import wave
 import hashlib
 import subprocess
 import shutil
+import time
 import requests
 import yt_dlp
 import httpx
 import threading
+import numpy as np
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="AlphaSteg 0.5")
+app = FastAPI(title="AlphaSteg 0.6 Pro")
 
 # CORS Middleware
 app.add_middleware(
@@ -30,6 +35,64 @@ app.add_middleware(
 SUB_BLOCK_SIZE = 1024
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+# Background cleanup thread for temporary files
+def background_temp_cleaner():
+    while True:
+        try:
+            now = time.time()
+            if os.path.exists(TEMP_DIR):
+                for item in os.listdir(TEMP_DIR):
+                    item_path = os.path.join(TEMP_DIR, item)
+                    if os.path.isdir(item_path):
+                        if now - os.path.getmtime(item_path) > 3600:
+                            shutil.rmtree(item_path, ignore_errors=True)
+        except Exception:
+            pass
+        time.sleep(300)
+
+threading.Thread(target=background_temp_cleaner, daemon=True).start()
+
+# AES-256-GCM Encryption / Decryption Helpers
+def encrypt_payload_aes(data: bytes, password: str | None) -> bytes:
+    if not password or not password.strip():
+        return data
+    salt = os.urandom(16)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=50_000,
+    )
+    key = kdf.derive(password.strip().encode('utf-8'))
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)
+    ciphertext = aesgcm.encrypt(nonce, data, None)
+    return b"AESA" + salt + nonce + ciphertext
+
+def decrypt_payload_aes(data: bytes | bytearray, password: str | None) -> bytes:
+    data = bytes(data)
+    if data.startswith(b"AESA"):
+        if not password or not password.strip():
+            raise HTTPException(status_code=400, detail="This payload is encrypted with AES-256-GCM. A password is required to decrypt it.")
+        if len(data) < 44:
+            raise HTTPException(status_code=400, detail="Corrupted AES-256 payload header.")
+        salt = data[4:20]
+        nonce = data[20:32]
+        ciphertext = data[32:]
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=50_000,
+        )
+        key = kdf.derive(password.strip().encode('utf-8'))
+        aesgcm = AESGCM(key)
+        try:
+            return aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Decryption failed: Incorrect password or corrupted payload.")
+    return data
 
 # MFSK Frequencies
 MFSK_FREQS = [10000.0, 10200.0, 10400.0, 10600.0, 10800.0, 11000.0, 11200.0, 11400.0]
@@ -70,7 +133,7 @@ def clean_temp_path(path):
 def resolve_local_url(url: str) -> str:
     if url.startswith("local:"):
         session_id = url.split("local:")[1]
-        for ext in [".wav", ".mp3"]:
+        for ext in [".flac", ".wav", ".mp3"]:
             p = os.path.join(TEMP_DIR, session_id, f"AlphaSteg_encoded{ext}")
             if os.path.exists(p):
                 return p
@@ -147,28 +210,20 @@ def make_hpf(fc, fs=44100):
     a2 = (1.0 - w0 / Q + w0_sq) / denom
     return BiquadFilter(b0, b1, b2, a1, a2)
 
-# Goertzel Filter for Single Frequency Magnitude Detection
-def goertzel(samples: list, target_freq: float, fs: float = 44100.0) -> float:
-    N = len(samples)
+# High-performance Vectorized Single Frequency Magnitude Detection
+def goertzel(samples: list | np.ndarray, target_freq: float, fs: float = 44100.0) -> float:
+    arr = np.asarray(samples, dtype=np.float64)
+    N = len(arr)
     if N == 0:
         return 0.0
-    k = N * target_freq / fs
-    w = 2.0 * math.pi * k / N
-    cosine = math.cos(w)
-    coeff = 2.0 * cosine
-    
-    s_prev = 0.0
-    s_prev2 = 0.0
-    for x in samples:
-        s = x + coeff * s_prev - s_prev2
-        s_prev2 = s_prev
-        s_prev = s
-        
-    power = s_prev*s_prev + s_prev2*s_prev2 - coeff * s_prev * s_prev2
-    return math.sqrt(max(0.0, power)) / N
+    t = np.arange(N, dtype=np.float64) / fs
+    mag = np.abs(np.dot(arr, np.exp(-2j * np.pi * target_freq * t))) / N
+    return float(mag)
 
 # Auto-detect file extension and media type from magic bytes
 def guess_extension_and_media_type(data: bytes):
+    if len(data) >= 4 and data.startswith(b"fLaC"):
+        return ".flac", "audio/flac"
     if len(data) >= 4 and data.startswith(b"PK\x03\x04"):
         return ".zip", "application/zip"
     if len(data) >= 4 and data.startswith(b"%PDF"):
@@ -608,7 +663,8 @@ async def decode_file(
     url: str = Query(...),
     method: str = Query(...),
     password: str = Query(None),
-    preset: str = Query("standard")
+    preset: str = Query("standard"),
+    as_json: bool = Query(False)
 ):
     if method not in ["lsb", "mfsk"]:
         raise HTTPException(status_code=400, detail="Decoding file only supports 'lsb' or 'mfsk' methods.")
@@ -766,6 +822,9 @@ async def decode_file(
             if checksum_received != checksum_calculated:
                 raise HTTPException(status_code=400, detail="Checksum mismatch. The file may be corrupted or the password is incorrect.")
                 
+        # Decrypt AES-256 payload if AES envelope exists
+        file_bytes = decrypt_payload_aes(file_bytes, password)
+
         # Guess extension & media type
         ext, media_type = guess_extension_and_media_type(file_bytes)
         out_filename = f"AlphaSteg_decoded{ext}"
@@ -774,6 +833,26 @@ async def decode_file(
         with open(out_path, "wb") as f_out:
             f_out.write(file_bytes)
             
+        if as_json:
+            try:
+                decoded_text = file_bytes.decode('utf-8')
+                return {
+                    "is_text": True,
+                    "text": decoded_text,
+                    "filename": out_filename,
+                    "media_type": media_type,
+                    "size_bytes": len(file_bytes),
+                    "download_url": f"/api/download_temp_file?session_id={session_id}&filename={out_filename}"
+                }
+            except Exception:
+                return {
+                    "is_text": False,
+                    "filename": out_filename,
+                    "media_type": media_type,
+                    "size_bytes": len(file_bytes),
+                    "download_url": f"/api/download_temp_file?session_id={session_id}&filename={out_filename}"
+                }
+
         return FileResponse(out_path, media_type=media_type, filename=out_filename)
         
     except Exception as e:
@@ -782,12 +861,22 @@ async def decode_file(
             raise e
         raise HTTPException(status_code=500, detail=f"Decoding failed: {str(e)}")
 
+@app.get("/api/download_temp_file")
+async def download_temp_file(session_id: str = Query(...), filename: str = Query(...)):
+    safe_filename = os.path.basename(filename)
+    file_path = os.path.join(TEMP_DIR, session_id, safe_filename)
+    if os.path.exists(file_path):
+        media_type = "text/plain" if safe_filename.endswith(".txt") else "application/octet-stream"
+        return FileResponse(file_path, media_type=media_type, filename=safe_filename)
+    raise HTTPException(status_code=404, detail="File not found or expired.")
+
 # Encode Audio Route
 @app.post("/api/encode")
 async def encode_audio(
     carrier: UploadFile = File(...),
     payload: UploadFile | None = File(None),
     file_payload: UploadFile | None = File(None),
+    text_payload: str | None = Form(None),
     alpha: float = Form(0.05),
     loop: bool = Form(True),
     password: str = Form(None),
@@ -821,10 +910,17 @@ async def encode_audio(
     try:
         # Handle digital file stego methods
         if method in ["lsb", "mfsk"]:
-            if not file_payload:
-                raise HTTPException(status_code=400, detail="You must provide a File Payload for LSB or MFSK steganography.")
+            if not file_payload and not (text_payload and text_payload.strip()):
+                raise HTTPException(status_code=400, detail="You must provide a File Payload or Secret Text Note for LSB or MFSK steganography.")
                 
-            file_bytes = await file_payload.read()
+            if file_payload:
+                file_bytes = await file_payload.read()
+            else:
+                file_bytes = text_payload.strip().encode('utf-8')
+
+            if method == "lsb" and password and password.strip():
+                file_bytes = encrypt_payload_aes(file_bytes, password)
+
             L_file = len(file_bytes)
             
             # Convert carrier to stereo 16-bit 44.1kHz WAV
@@ -1058,11 +1154,15 @@ async def encode_audio(
 
 @app.get("/api/download")
 async def download_file(session_id: str):
-    # Search for wav or mp3
-    for ext in [".mp3", ".wav"]:
+    for ext in [".flac", ".mp3", ".wav"]:
         file_path = os.path.join(TEMP_DIR, session_id, f"AlphaSteg_encoded{ext}")
         if os.path.exists(file_path):
-            media_type = "audio/wav" if ext == ".wav" else "audio/mpeg"
+            if ext == ".flac":
+                media_type = "audio/flac"
+            elif ext == ".wav":
+                media_type = "audio/wav"
+            else:
+                media_type = "audio/mpeg"
             return FileResponse(file_path, media_type=media_type, filename=f"AlphaSteg_encoded{ext}")
             
     raise HTTPException(status_code=404, detail="File not found or session expired")

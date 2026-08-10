@@ -1,0 +1,15 @@
+// Top-level build file for 100% Pure Native Kotlin AlphaSteg Pro & AlphaVault
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.2'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22'
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}

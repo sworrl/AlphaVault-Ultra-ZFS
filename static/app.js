@@ -1,4 +1,4 @@
-const DEFAULT_PLACEHOLDER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'><rect width='64' height='64' fill='%23222222'/><path d='M20 40 L28 24 L36 36 L44 28 L48 40' fill='none' stroke='%23555555' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>";
+const DEFAULT_PLACEHOLDER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'><rect width='64' height='64' fill='%230f1624'/><path d='M20 40 L28 24 L36 36 L44 28 L48 40' fill='none' stroke='%2300f2fe' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>";
 
 // State variables
 let currentUrl = null;
@@ -9,6 +9,8 @@ let isPlaying = false;
 let audioContext = null;
 let analyser = null;
 let visualizerAnimationId = null;
+let currentVisMode = "spectrum"; // spectrum | waveform | lissajous
+let payloadMode = "file"; // file | text
 
 // DOM Elements
 const audioPlayer = document.getElementById("audio-player");
@@ -37,6 +39,11 @@ const playerPasswordInputGroup = document.getElementById("player-password-input-
 const playerPassword = document.getElementById("player-password");
 const playerStegoMethod = document.getElementById("player-stego-method");
 const btnScanStego = document.getElementById("btn-scan-stego");
+const scanResultBadge = document.getElementById("scan-result-badge");
+const scanResultIcon = document.getElementById("scan-result-icon");
+const scanResultTitle = document.getElementById("scan-result-title");
+const scanResultDesc = document.getElementById("scan-result-desc");
+
 const digitalFilePanel = document.getElementById("digital-file-panel");
 const btnDecodeFile = document.getElementById("btn-decode-file");
 const decoderProcessing = document.getElementById("decoder-processing");
@@ -53,8 +60,9 @@ const volumeSlider = document.getElementById("volume-slider");
 const btnMute = document.getElementById("btn-mute");
 
 const canvas = document.getElementById("visualizer-canvas");
-const canvasCtx = canvas.getContext("2d");
+const canvasCtx = canvas ? canvas.getContext("2d") : null;
 const visualizerPlaceholder = document.getElementById("visualizer-placeholder");
+const visModeBtns = document.querySelectorAll(".vis-mode-btn");
 
 // Encoder Elements
 const dropCarrier = document.getElementById("drop-carrier");
@@ -63,6 +71,16 @@ const inputCarrier = document.getElementById("input-carrier");
 const inputPayload = document.getElementById("input-payload");
 const carrierFileName = document.getElementById("carrier-file-name");
 const payloadFileName = document.getElementById("payload-file-name");
+
+const digitalPayloadSection = document.getElementById("digital-payload-section");
+const btnPayloadFile = document.getElementById("btn-payload-file");
+const btnPayloadText = document.getElementById("btn-payload-text");
+const dropFilePayload = document.getElementById("drop-file-payload");
+const inputFilePayload = document.getElementById("input-file-payload");
+const filePayloadName = document.getElementById("file-payload-name");
+const containerTextPayload = document.getElementById("container-text-payload");
+const inputTextPayload = document.getElementById("input-text-payload");
+const textByteCounter = document.getElementById("text-byte-counter");
 
 const stegoStrength = document.getElementById("stego-strength");
 const stegoStrengthVal = document.getElementById("stego-strength-val");
@@ -78,14 +96,18 @@ const encoderResult = document.getElementById("encoder-result");
 const btnDownloadResult = document.getElementById("btn-download-result");
 const btnSendToPlayer = document.getElementById("btn-send-to-player");
 const encoderStegoMethod = document.getElementById("encoder-stego-method");
-const dropFilePayload = document.getElementById("drop-file-payload");
-const inputFilePayload = document.getElementById("input-file-payload");
-const filePayloadName = document.getElementById("file-payload-name");
 const encoderMethodWarning = document.getElementById("encoder-method-warning");
 const encoderMethodMfskInfo = document.getElementById("encoder-method-mfsk-info");
 const encoderMfskPresetGroup = document.getElementById("encoder-mfsk-preset-group");
 const encoderMfskPreset = document.getElementById("encoder-mfsk-preset");
 const encoderPasswordContainer = document.getElementById("encoder-password-container");
+
+// Modal Elements
+const modalTextReader = document.getElementById("modal-text-reader");
+const modalTextContent = document.getElementById("modal-text-content");
+const btnCloseModal = document.getElementById("btn-close-modal");
+const btnCopyModalText = document.getElementById("btn-copy-modal-text");
+const btnDownloadModalFile = document.getElementById("btn-download-modal-file");
 
 // --- NAVIGATION ---
 tabPlayer.addEventListener("click", () => {
@@ -100,6 +122,15 @@ tabEncoder.addEventListener("click", () => {
     tabPlayer.classList.remove("active");
     viewEncoder.classList.add("active");
     viewPlayer.classList.remove("active");
+});
+
+// Visualizer Mode Selector
+visModeBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+        visModeBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentVisMode = btn.getAttribute("data-vis");
+    });
 });
 
 // --- AUDIO PLAYER METADATA RESOLUTION ---
@@ -239,7 +270,7 @@ async function uploadPlayerFile(file) {
         
     } catch (err) {
         alert(err.message);
-        playerFileName.innerText = "Drag & drop local audio/video file here to test";
+        playerFileName.innerText = "Drag & drop local audio file here to test";
     } finally {
         btnLoadUrl.disabled = false;
     }
@@ -301,31 +332,27 @@ function initAudioContext() {
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
+    analyser.fftSize = 512;
 
     const source = audioContext.createMediaElementSource(audioPlayer);
     source.connect(analyser);
     analyser.connect(audioContext.destination);
 
-    visualizerPlaceholder.classList.add("hidden");
+    if (visualizerPlaceholder) visualizerPlaceholder.classList.add("hidden");
     startVisualizer();
 }
 
-// --- STREAM MODE TOGGLE SWITCH ---
+// Stream mode toggle switch
 toggleButtons.forEach((btn, idx) => {
     btn.addEventListener("click", () => {
         toggleButtons.forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         
-        // Slide highlight
         toggleSlider.style.transform = `translateX(${idx * 100}%)`;
 
         const mode = btn.getAttribute("data-mode");
         currentMode = mode;
 
-
-
-        // Reload stream at current position
         if (currentUrl) {
             const time = streamStartTime + audioPlayer.currentTime;
             loadAudioStream(time);
@@ -333,7 +360,6 @@ toggleButtons.forEach((btn, idx) => {
     });
 });
 
-// Decrypt Checkbox toggling
 decryptPasswordCheck.addEventListener("change", () => {
     if (decryptPasswordCheck.checked) {
         playerPasswordInputGroup.classList.remove("hidden");
@@ -342,9 +368,8 @@ decryptPasswordCheck.addEventListener("change", () => {
     }
 });
 
-// --- AUDIO PLAYER PLAYBACK CONTROLS ---
+// Play / Pause Toggle
 btnPlayPause.addEventListener("click", () => {
-    // Resume audio context if suspended (browser security)
     if (audioContext && audioContext.state === "suspended") {
         audioContext.resume();
     }
@@ -371,13 +396,11 @@ audioPlayer.addEventListener("timeupdate", () => {
     const absoluteTime = streamStartTime + audioPlayer.currentTime;
     timeCurrent.innerText = formatTime(absoluteTime);
     
-    // Only update slider if user is not actively dragging it
     if (!document.activeElement || document.activeElement !== seekSlider) {
         seekSlider.value = (absoluteTime / trackDuration) * 100;
     }
 });
 
-// When user drags seek bar
 seekSlider.addEventListener("change", () => {
     if (!currentUrl) return;
     let targetTime = (seekSlider.value / 100) * trackDuration;
@@ -387,21 +410,39 @@ seekSlider.addEventListener("change", () => {
     loadAudioStream(targetTime);
 });
 
-// Volume Control
+function seekRelative(offsetSecs) {
+    if (!currentUrl || !trackDuration) return;
+    let currentAbsolute = streamStartTime + audioPlayer.currentTime;
+    let target = Math.max(0, Math.min(trackDuration, currentAbsolute + offsetSecs));
+    loadAudioStream(target);
+}
+
+// Keyboard Shortcuts
+window.addEventListener("keydown", (e) => {
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+    if (e.code === "Space") {
+        e.preventDefault();
+        btnPlayPause.click();
+    } else if (e.code === "KeyM") {
+        btnMute.click();
+    } else if (e.code === "KeyS") {
+        btnScanStego.click();
+    } else if (e.code === "ArrowLeft") {
+        seekRelative(-5);
+    } else if (e.code === "ArrowRight") {
+        seekRelative(5);
+    }
+});
+
 volumeSlider.addEventListener("input", () => {
     audioPlayer.volume = volumeSlider.value;
 });
 
 btnMute.addEventListener("click", () => {
     audioPlayer.muted = !audioPlayer.muted;
-    if (audioPlayer.muted) {
-        btnMute.style.opacity = "0.5";
-    } else {
-        btnMute.style.opacity = "1";
-    }
+    btnMute.style.opacity = audioPlayer.muted ? "0.5" : "1";
 });
 
-// Stream ended
 audioPlayer.addEventListener("ended", () => {
     isPlaying = false;
     playIcon.classList.remove("hidden");
@@ -411,53 +452,97 @@ audioPlayer.addEventListener("ended", () => {
     timeCurrent.innerText = "00:00";
 });
 
-// --- CANVAS AUDIO VISUALIZER ---
+// --- CANVAS AUDIO VISUALIZER (3 MODES) ---
 function startVisualizer() {
     if (visualizerAnimationId) {
         cancelAnimationFrame(visualizerAnimationId);
     }
 
+    if (!canvas || !canvasCtx) return;
+
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
 
     const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+    const freqData = new Uint8Array(bufferLength);
+    const timeData = new Uint8Array(bufferLength);
 
     function draw() {
         visualizerAnimationId = requestAnimationFrame(draw);
 
-        analyser.getByteFrequencyData(dataArray);
-
-        // Solid dark visualizer background
-        canvasCtx.fillStyle = '#0b0b0b';
+        canvasCtx.fillStyle = '#090d16';
         canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Draw clean monochrome frequency bars
-        const barWidth = (canvas.width / bufferLength) * 1.5;
-        let barHeight;
-        let x = 0;
+        if (currentVisMode === "spectrum") {
+            analyser.getByteFrequencyData(freqData);
+            const barWidth = (canvas.width / (bufferLength * 0.7)) * 1.8;
+            let x = 0;
 
-        for (let i = 0; i < bufferLength; i++) {
-            barHeight = (dataArray[i] / 255) * canvas.height * 0.8;
+            for (let i = 0; i < bufferLength * 0.7; i++) {
+                const barHeight = (freqData[i] / 255) * canvas.height * 0.85;
 
-            // Minimalist gray to white scale based on frequency height
-            const intensity = Math.min(255, Math.floor(dataArray[i] + 40));
-            canvasCtx.fillStyle = `rgb(${intensity}, ${intensity}, ${intensity})`;
-            
-            // Draw bar from center vertically
-            const y = (canvas.height - barHeight) / 2;
-            canvasCtx.fillRect(x, y, barWidth - 1, barHeight);
+                const grad = canvasCtx.createLinearGradient(0, canvas.height, 0, 0);
+                grad.addColorStop(0, '#00f2fe');
+                grad.addColorStop(1, '#7f00ff');
 
-            x += barWidth;
+                canvasCtx.fillStyle = grad;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+
+                x += barWidth;
+            }
+        } else if (currentVisMode === "waveform") {
+            analyser.getByteTimeDomainData(timeData);
+            canvasCtx.lineWidth = 2.5;
+            canvasCtx.strokeStyle = '#00f2fe';
+            canvasCtx.shadowBlur = 8;
+            canvasCtx.shadowColor = '#00f2fe';
+
+            canvasCtx.beginPath();
+            const sliceWidth = canvas.width / bufferLength;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const v = timeData[i] / 128.0;
+                const y = (v * canvas.height) / 2;
+
+                if (i === 0) canvasCtx.moveTo(x, y);
+                else canvasCtx.lineTo(x, y);
+
+                x += sliceWidth;
+            }
+
+            canvasCtx.lineTo(canvas.width, canvas.height / 2);
+            canvasCtx.stroke();
+            canvasCtx.shadowBlur = 0;
+
+        } else if (currentVisMode === "lissajous") {
+            analyser.getByteTimeDomainData(timeData);
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = '#00e676';
+            canvasCtx.shadowBlur = 10;
+            canvasCtx.shadowColor = '#00e676';
+
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) * 0.8;
+
+            canvasCtx.beginPath();
+            const quarter = Math.floor(bufferLength / 4);
+
+            for (let i = 0; i < bufferLength; i++) {
+                const xVal = (timeData[i] - 128) / 128.0;
+                const yVal = (timeData[(i + quarter) % bufferLength] - 128) / 128.0;
+
+                const px = centerX + xVal * radius;
+                const py = centerY + yVal * radius;
+
+                if (i === 0) canvasCtx.moveTo(px, py);
+                else canvasCtx.lineTo(px, py);
+            }
+            canvasCtx.closePath();
+            canvasCtx.stroke();
+            canvasCtx.shadowBlur = 0;
         }
-
-        // Draw a clean baseline through the center
-        canvasCtx.strokeStyle = '#222222';
-        canvasCtx.lineWidth = 1;
-        canvasCtx.beginPath();
-        canvasCtx.moveTo(0, canvas.height / 2);
-        canvasCtx.lineTo(canvas.width, canvas.height / 2);
-        canvasCtx.stroke();
     }
 
     draw();
@@ -472,12 +557,10 @@ window.addEventListener("resize", () => {
 
 // --- AUDIO STEGO ENCODER ---
 
-// Strength Slider Label Update
 stegoStrength.addEventListener("input", () => {
     stegoStrengthVal.innerText = `${stegoStrength.value}%`;
 });
 
-// Password Checkbox Toggling
 encryptPayloadCheck.addEventListener("change", () => {
     if (encryptPayloadCheck.checked) {
         encoderPasswordInputGroup.classList.remove("hidden");
@@ -487,7 +570,36 @@ encryptPayloadCheck.addEventListener("change", () => {
     }
 });
 
-// File Inputs Drag & Drop Setup
+// Payload tab mode switcher (File vs Secret Text)
+if (btnPayloadFile && btnPayloadText) {
+    btnPayloadFile.addEventListener("click", () => {
+        btnPayloadFile.classList.add("active");
+        btnPayloadText.classList.remove("active");
+        dropFilePayload.classList.remove("hidden");
+        containerTextPayload.classList.add("hidden");
+        payloadMode = "file";
+        checkEncodeInputs();
+    });
+
+    btnPayloadText.addEventListener("click", () => {
+        btnPayloadText.classList.add("active");
+        btnPayloadFile.classList.remove("active");
+        containerTextPayload.classList.remove("hidden");
+        dropFilePayload.classList.add("hidden");
+        payloadMode = "text";
+        checkEncodeInputs();
+    });
+}
+
+if (inputTextPayload) {
+    inputTextPayload.addEventListener("input", () => {
+        const text = inputTextPayload.value;
+        const bytes = new TextEncoder().encode(text).length;
+        textByteCounter.innerText = `${bytes} bytes`;
+        checkEncodeInputs();
+    });
+}
+
 setupUploadBox(dropCarrier, inputCarrier, carrierFileName);
 setupUploadBox(dropPayload, inputPayload, payloadFileName);
 
@@ -526,20 +638,24 @@ function checkEncodeInputs() {
     const hasCarrier = inputCarrier.files.length > 0;
     
     if (method === "lsb" || method === "mfsk") {
-        const hasFilePayload = inputFilePayload.files.length > 0;
-        btnEncode.disabled = !(hasCarrier && hasFilePayload);
+        let hasDigitalPayload = false;
+        if (payloadMode === "file") {
+            hasDigitalPayload = inputFilePayload.files.length > 0;
+        } else {
+            hasDigitalPayload = inputTextPayload.value.trim().length > 0;
+        }
+        btnEncode.disabled = !(hasCarrier && hasDigitalPayload);
     } else {
         const hasAudioPayload = inputPayload.files.length > 0;
         btnEncode.disabled = !(hasCarrier && hasAudioPayload);
     }
 }
 
-// Encode Submission
 btnEncode.addEventListener("click", async () => {
     const method = encoderStegoMethod.value;
     const hasCarrier = inputCarrier.files.length > 0;
-    const hasPayload = (method === "lsb" || method === "mfsk") ? (inputFilePayload.files.length > 0) : (inputPayload.files.length > 0);
-    if (!hasCarrier || !hasPayload) return;
+    
+    if (!hasCarrier) return;
 
     btnEncode.disabled = true;
     encoderProcessing.classList.remove("hidden");
@@ -554,7 +670,11 @@ btnEncode.addEventListener("click", async () => {
     formData.append("loop", treatmentLoop.checked);
 
     if (method === "lsb" || method === "mfsk") {
-        formData.append("file_payload", inputFilePayload.files[0]);
+        if (payloadMode === "file" && inputFilePayload.files.length > 0) {
+            formData.append("file_payload", inputFilePayload.files[0]);
+        } else if (payloadMode === "text" && inputTextPayload.value.trim()) {
+            formData.append("text_payload", inputTextPayload.value.trim());
+        }
         if (method === "mfsk") {
             formData.append("preset", encoderMfskPreset.value);
         }
@@ -579,10 +699,7 @@ btnEncode.addEventListener("click", async () => {
 
         const data = await response.json();
 
-        // Update Result card download link
         btnDownloadResult.href = data.download_url;
-        
-        // Store the local stream URL and duration on the play button
         btnSendToPlayer.setAttribute("data-stream-url", data.stream_url);
         btnSendToPlayer.setAttribute("data-duration", data.duration);
 
@@ -597,32 +714,24 @@ btnEncode.addEventListener("click", async () => {
     }
 });
 
-// "Send to Player" Action
 btnSendToPlayer.addEventListener("click", () => {
     const streamUrl = btnSendToPlayer.getAttribute("data-stream-url");
     if (!streamUrl) return;
 
-    // Synchronize decoding method dropdown to what was encoded
     playerStegoMethod.value = encoderStegoMethod.value;
     if (encoderStegoMethod.value === "mfsk") {
         playerMfskPreset.value = encoderMfskPreset.value;
     }
     updatePlayerPanels();
 
-    // Load into Player
     trackTitle.innerText = "Encoded Stego Track (Local)";
     trackArtist.innerText = "AlphaSteg Encoder Output";
-    trackThumbnail.src = DEFAULT_PLACEHOLDER; // We can set a local fallback thumbnail
+    trackThumbnail.src = DEFAULT_PLACEHOLDER;
     trackSourceBadge.innerText = "Local Session";
     trackSourceBadge.style.display = "inline-block";
     trackCard.classList.remove("hidden");
 
-    // Set State
     currentUrl = streamUrl;
-    // For local tracks, we can resolve duration using audio player's native metadata once loaded!
-    // Since we stream it, let's wait for loadedmetadata event to know duration,
-    // or we can estimate it if the server knows it. Actually, audio element knows duration for local WAV files!
-    // Let's set a listener for loadedmetadata.
     const durationAttr = btnSendToPlayer.getAttribute("data-duration");
     const parsedDuration = parseFloat(durationAttr);
     if (!isNaN(parsedDuration) && isFinite(parsedDuration) && parsedDuration > 0) {
@@ -636,31 +745,14 @@ btnSendToPlayer.addEventListener("click", () => {
     seekSlider.value = 0;
     streamStartTime = 0;
 
-    // Setup listener to resolve duration
-    const durationResolver = () => {
-        const d = audioPlayer.duration;
-        if ((!trackDuration || trackDuration <= 0) && d && !isNaN(d) && isFinite(d) && d > 0) {
-            trackDuration = d;
-            timeTotal.innerText = formatTime(trackDuration);
-        }
-        audioPlayer.removeEventListener("loadedmetadata", durationResolver);
-    };
-    audioPlayer.addEventListener("loadedmetadata", durationResolver);
-
-    // Reset player UI
     isPlaying = false;
     btnPlayPause.disabled = false;
     playIcon.classList.remove("hidden");
     pauseIcon.classList.add("hidden");
 
-    // Load stream source
     loadAudioStream(0);
-
-    // Switch Tab to Player
     tabPlayer.click();
 });
-
-// --- DIGITAL DECODING & AUTO-DETECT LOGIC ---
 
 function updatePlayerPanels() {
     const method = playerStegoMethod.value;
@@ -669,12 +761,9 @@ function updatePlayerPanels() {
     
     if (method === "lsb" || method === "mfsk") {
         digitalFilePanel.classList.remove("hidden");
-        
-        // Hide stream toggle since it is file stego
         if (streamToggleContainer) streamToggleContainer.classList.add("hidden");
         if (streamToggleHeading) streamToggleHeading.classList.add("hidden");
         
-        // Force mode to primary
         if (currentMode !== "primary") {
             currentMode = "primary";
             const primaryBtn = document.querySelector('.toggle-btn[data-mode="primary"]');
@@ -685,12 +774,10 @@ function updatePlayerPanels() {
         }
     } else {
         digitalFilePanel.classList.add("hidden");
-        // Show stream toggle
         if (streamToggleContainer) streamToggleContainer.classList.remove("hidden");
         if (streamToggleHeading) streamToggleHeading.classList.remove("hidden");
     }
     
-    // Toggle MFSK Preset dropdown
     if (method === "mfsk") {
         playerMfskPresetGroup.classList.remove("hidden");
     } else {
@@ -698,7 +785,7 @@ function updatePlayerPanels() {
     }
 }
 
-// Auto-Detect Codec Scanner Click Handler
+// Auto-Detect Stego Codec Handler
 btnScanStego.addEventListener("click", async () => {
     if (!currentUrl) {
         alert("Please load a track first before scanning.");
@@ -706,7 +793,7 @@ btnScanStego.addEventListener("click", async () => {
     }
     
     btnScanStego.disabled = true;
-    const oldText = btnScanStego.innerHTML;
+    const oldHtml = btnScanStego.innerHTML;
     btnScanStego.innerText = "Scanning...";
     
     try {
@@ -724,23 +811,32 @@ btnScanStego.addEventListener("click", async () => {
                 playerMfskPreset.value = data.preset;
             }
             updatePlayerPanels();
-            alert(`Stego detected: ${playerStegoMethod.options[playerStegoMethod.selectedIndex].text}!`);
-            
+
+            // Display Auto-Detect Diagnostic Badge
+            scanResultBadge.classList.remove("hidden");
+            scanResultIcon.innerText = detected === "lsb" ? "💾" : (detected === "mfsk" ? "📡" : "🎵");
+            const conf = data.confidence || 95;
+            scanResultTitle.innerText = `${data.description || detected.toUpperCase()} (${conf}% Confidence)`;
+            scanResultDesc.innerText = `Auto-Selected Codec: ${playerStegoMethod.options[playerStegoMethod.selectedIndex].text}`;
+
             // Reload stream
             const time = streamStartTime + audioPlayer.currentTime;
             loadAudioStream(time);
         } else {
-            alert("No steganography signature detected in the first 3 seconds of this track.");
+            scanResultBadge.classList.remove("hidden");
+            scanResultIcon.innerText = "🔍";
+            scanResultTitle.innerText = "No Steganography Detected";
+            scanResultDesc.innerText = "No known steganography signature found in the first 3 seconds.";
         }
     } catch (err) {
         alert(err.message);
     } finally {
         btnScanStego.disabled = false;
-        btnScanStego.innerHTML = oldText;
+        btnScanStego.innerHTML = oldHtml;
     }
 });
 
-// Extract & Download Digital File Payload
+// Extract & Reveal Digital File / Text Payload
 btnDecodeFile.addEventListener("click", async () => {
     if (!currentUrl) return;
     
@@ -753,7 +849,7 @@ btnDecodeFile.addEventListener("click", async () => {
         password = playerPassword.value.trim();
     }
     
-    let decodeUrl = `/api/decode_file?url=${encodeURIComponent(currentUrl)}&method=${method}`;
+    let decodeUrl = `/api/decode_file?url=${encodeURIComponent(currentUrl)}&method=${method}&as_json=true`;
     if (method === "mfsk") {
         decodeUrl += `&preset=${playerMfskPreset.value}`;
     }
@@ -768,33 +864,27 @@ btnDecodeFile.addEventListener("click", async () => {
             throw new Error(err.detail || "Failed to decode file payload");
         }
         
-        const blob = await response.blob();
+        const data = await response.json();
         
-        let filename = "AlphaSteg_decoded_file.bin";
-        const disposition = response.headers.get('Content-Disposition');
-        if (disposition && disposition.indexOf('attachment') !== -1) {
-            const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-            const matches = filenameRegex.exec(disposition);
-            if (matches != null && matches[1]) { 
-                filename = matches[1].replace(/['"]/g, '');
-            }
+        if (data.is_text && data.text) {
+            // Open Secret Text Reader Modal
+            modalTextContent.value = data.text;
+            btnDownloadModalFile.href = data.download_url;
+            btnDownloadModalFile.download = data.filename || "secret_note.txt";
+            modalTextReader.classList.remove("hidden");
         } else {
-            const contentType = response.headers.get('Content-Type');
-            if (contentType === "application/zip") filename = "AlphaSteg_decoded.zip";
-            else if (contentType === "text/plain") filename = "AlphaSteg_decoded.txt";
-            else if (contentType === "application/pdf") filename = "AlphaSteg_decoded.pdf";
-            else if (contentType === "image/png") filename = "AlphaSteg_decoded.png";
-            else if (contentType === "image/jpeg") filename = "AlphaSteg_decoded.jpg";
+            // Binary payload download
+            const fileResp = await fetch(data.download_url);
+            const blob = await fileResp.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = downloadUrl;
+            a.download = data.filename || "AlphaSteg_decoded_file.bin";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(downloadUrl);
         }
-        
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(downloadUrl);
         
     } catch (err) {
         alert(err.message);
@@ -804,18 +894,35 @@ btnDecodeFile.addEventListener("click", async () => {
     }
 });
 
-// Encoder Method Change Listener
+// Modal Actions
+if (btnCloseModal) {
+    btnCloseModal.addEventListener("click", () => {
+        modalTextReader.classList.add("hidden");
+    });
+}
+
+if (btnCopyModalText) {
+    btnCopyModalText.addEventListener("click", () => {
+        modalTextContent.select();
+        navigator.clipboard.writeText(modalTextContent.value);
+        const originalText = btnCopyModalText.innerText;
+        btnCopyModalText.innerText = "Copied!";
+        setTimeout(() => {
+            btnCopyModalText.innerText = originalText;
+        }, 2000);
+    });
+}
+
 encoderStegoMethod.addEventListener("change", () => {
     const method = encoderStegoMethod.value;
     if (method === "lsb" || method === "mfsk") {
         dropPayload.classList.add("hidden");
-        dropFilePayload.classList.remove("hidden");
+        digitalPayloadSection.classList.remove("hidden");
         encoderPasswordContainer.classList.remove("hidden");
     } else {
         dropPayload.classList.remove("hidden");
-        dropFilePayload.classList.add("hidden");
+        digitalPayloadSection.classList.add("hidden");
         encoderPasswordContainer.classList.add("hidden");
-        // Reset password checkbox
         encryptPayloadCheck.checked = false;
         encoderPasswordInputGroup.classList.add("hidden");
         encoderPassword.value = "";
@@ -837,7 +944,6 @@ encoderStegoMethod.addEventListener("change", () => {
     checkEncodeInputs();
 });
 
-// Setup Digital File Drag & Drop
 setupFilePayloadUploadBox();
 
 function setupFilePayloadUploadBox() {

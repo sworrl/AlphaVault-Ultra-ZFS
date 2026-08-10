@@ -879,3 +879,232 @@ button {
     line-height: 1.4;
     border-left: 3px solid #d9534f;
 }
+
+/* --- PRO STYLES & CYBERPUNK VISUAL SYSTEM --- */
+.visualizer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.vis-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #00f2fe;
+}
+
+.vis-mode-switch {
+    display: flex;
+    gap: 0.35rem;
+    background: #0f1624;
+    padding: 0.25rem;
+    border-radius: 6px;
+    border: 1px solid #1e293b;
+}
+
+.vis-mode-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.vis-mode-btn.active {
+    background: linear-gradient(135deg, #00f2fe 0%, #7f00ff 100%);
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.4);
+}
+
+.canvas-wrapper {
+    position: relative;
+    width: 100%;
+    height: 180px;
+    background: #090d16;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #1e293b;
+}
+
+.canvas-wrapper canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Scan Result Badge */
+.scan-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: linear-gradient(135deg, rgba(0, 242, 254, 0.1) 0%, rgba(127, 0, 255, 0.1) 100%);
+    border: 1px solid rgba(0, 242, 254, 0.3);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-top: 0.75rem;
+    animation: slideDown 0.3s ease;
+}
+
+.scan-badge #scan-result-icon {
+    font-size: 1.5rem;
+}
+
+.scan-badge-text strong {
+    color: #00f2fe;
+    font-size: 0.9rem;
+    display: block;
+}
+
+.scan-badge-text p {
+    color: #cbd5e1;
+    font-size: 0.8rem;
+    margin: 0;
+}
+
+/* Payload Tabs & Text Area */
+.payload-tab-group {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.payload-tab-btn {
+    flex: 1;
+    background: #111827;
+    border: 1px solid #1f293d;
+    color: #94a3b8;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.payload-tab-btn.active {
+    background: #00f2fe;
+    color: #090d16;
+    border-color: #00f2fe;
+}
+
+.text-payload-container {
+    width: 100%;
+    position: relative;
+}
+
+.text-payload-container textarea {
+    width: 100%;
+    background-color: #0d131f;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 0.75rem;
+    color: #00f2fe;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.85rem;
+    outline: none;
+    resize: vertical;
+}
+
+.text-payload-container textarea:focus {
+    border-color: #00f2fe;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+}
+
+.text-byte-counter {
+    text-align: right;
+    font-size: 0.7rem;
+    color: #64748b;
+    margin-top: 0.25rem;
+}
+
+/* Modal Overlay & Card */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(9, 13, 22, 0.85);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+}
+
+.modal-card {
+    background: #111827;
+    border: 1px solid #1f293d;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 550px;
+    padding: 1.5rem;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #1f293d;
+    padding-bottom: 0.75rem;
+}
+
+.modal-header h3 {
+    color: #00f2fe;
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+.modal-close {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.modal-close:hover {
+    color: #ffffff;
+}
+
+.modal-subtitle {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-bottom: 0.5rem;
+}
+
+.modal-body textarea {
+    width: 100%;
+    height: 180px;
+    background: #090d16;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 0.75rem;
+    color: #00e676;
+    font-family: 'Fira Code', monospace;
+    font-size: 0.85rem;
+    outline: none;
+    margin-bottom: 1rem;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
