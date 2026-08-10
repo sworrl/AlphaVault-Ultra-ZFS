@@ -67,7 +67,7 @@ The Android app carries its own Kotlin implementation of the cascade cipher and 
 ## The Android app
 
 <p align="center">
-  <img src="screen.png" alt="AlphaVault Ultra ZFS Android UI" width="320">
+  <img src="screenshot-android.png" alt="AlphaVault Ultra ZFS Android UI" width="320">
 </p>
 
 The app opens on a lock screen and, once unlocked, shows three panels behind a floating navigation dock.
