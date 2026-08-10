@@ -33,7 +33,11 @@ Working and tested:
 - In-app viewers for images, text, audio, video, and PDF, rendered inside a
   screenshot-blocked window; no bytes leave the app.
 - Multi-select batch vaulting; "Move to Vault" / "Copy to Vault" from the share
-  sheet; rename and sort vaulted files.
+  sheet; rename, sort, tag, and color-label vaulted files.
+- Open an existing vault by code from the lock screen, with no local onboarding,
+  so a fresh install opens a portable vault without storing a verifier.
+- Carrier scans on unlock (index load, chunk gather, usage) run across the FLAC
+  files in parallel, which shortens the wait before the vault list appears.
 - Lock screen: hex-plus-symbol codes (8+ chars), master and duress codes each set
   twice at onboarding; the duress code wipes credentials and clears the carriers.
 - Calculator disguise: the launcher becomes a working scientific calculator, and
