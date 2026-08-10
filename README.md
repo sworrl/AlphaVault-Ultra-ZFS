@@ -10,6 +10,20 @@ Started from [bennjordan/AlphaSteg](https://github.com/bennjordan/AlphaSteg): th
 Python desktop server (`main.py`, `static/`) is that project, kept as-is. The
 Android app under `android/` is new and does not use the server.
 
+## Screenshots
+
+Captured on a Pixel 10 Pro XL (Android 14).
+
+| Lock screen | Disks | Vault |
+|---|---|---|
+| ![Lock screen with per-character colored keypad](docs/screenshots/01-lock.png) | ![Disks view: RAID-Z2 pool, partition bar, and a treemap of the FLAC carriers](docs/screenshots/03-disks.png) | ![Vault view: treemap and file cards](docs/screenshots/02-vault.png) |
+
+Lock screen: the hex-plus-symbol keypad, each character its own color, with "open
+an existing vault by code" below the keypad. Disks: the whole-library RAID-Z2 pool
+(188 carriers, 7.93 GB), a GParted-style partition bar for device/pool/vault/free,
+and a WinDirStat-style treemap of the carriers colored by album. Vault: a treemap
+of the hidden files over their cards, each showing size and chunk count.
+
 ## Status
 
 Verified by 21 unit tests and by hand on a Pixel 10 Pro XL (Android 14). Items
