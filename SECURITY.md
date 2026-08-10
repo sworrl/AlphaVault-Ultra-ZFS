@@ -53,6 +53,17 @@ for this threat model.
 - In-app viewers render decrypted bytes inside the secure window and never hand
   plaintext to another app.
 
+## Multiple codes and one-time codes
+
+A dataset can be encrypted under one random 256-bit data key that is wrapped
+separately for each code allowed to open it (`KeyRing`). Each wrap is its own
+cascade envelope, so a code reveals only whether it opens that dataset, not how
+many other codes exist or how close a guess was. A wrap can be one-time: opening
+with it removes the wrap, so the code opens nothing afterward. That is the
+journalist model, a set of single-use codes handed out separately from the data.
+The key ring holds no verifier; a code that matches nothing returns the same
+answer an empty ring gives.
+
 ## Duress
 
 A duress code, distinct from the master code and set at onboarding, erases the
