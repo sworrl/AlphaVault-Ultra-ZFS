@@ -120,6 +120,13 @@ class MainActivity : AppCompatActivity() {
         uri?.let { processVaultFileSelection(it) }
     }
 
+    private val deleteOriginalsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val msg = if (result.resultCode == RESULT_OK) "Originals removed." else "Originals kept."
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
     private val selectCarrierFlacLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -292,6 +299,11 @@ class MainActivity : AppCompatActivity() {
             aliasComponent("LauncherVault"), if (on) disabled else enabled,
             android.content.pm.PackageManager.DONT_KILL_APP
         )
+        // The "Move to Vault" share target disappears while disguised.
+        packageManager.setComponentEnabledSetting(
+            aliasComponent("ShareReceiverActivity"), if (on) disabled else enabled,
+            android.content.pm.PackageManager.DONT_KILL_APP
+        )
         Toast.makeText(
             this,
             if (on) "Disguised as Calculator. Enter your code in the calculator to unlock."
@@ -393,6 +405,7 @@ class MainActivity : AppCompatActivity() {
                 renderPoolDisks(result.tracks)
                 updateStorageBar(result.totalBytes, result.tracks.size)
                 refreshVaultUi()
+                maybeHandlePendingShare()
                 val poolSize = formatSize(result.totalBytes)
                 tvVaultStats.text = getString(
                     R.string.vault_stats_synced,
@@ -605,6 +618,66 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** After unlock and a pool sync, offer to move or copy any shared files into the vault. */
+    private fun maybeHandlePendingShare() {
+        val items = PendingShare.items
+        if (items.isEmpty() || isDecoyMode) return
+        if (vaultPassword.isBlank()) return
+        if (currentPool.isEmpty()) {
+            Toast.makeText(this, "Grant All-files access and sync so there are carriers to vault into.", Toast.LENGTH_LONG).show()
+            if (canRequestAllFilesAccess() && !hasAllFilesAccess()) promptAllFilesAccess()
+            return
+        }
+        PendingShare.items = emptyList()
+        val count = items.size
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Add to vault")
+            .setMessage("Add $count file${if (count == 1) "" else "s"} to your vault?")
+            .setPositiveButton("Move to Vault") { _, _ -> vaultSharedItems(items, move = true) }
+            .setNeutralButton("Copy to Vault") { _, _ -> vaultSharedItems(items, move = false) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun vaultSharedItems(items: List<PendingShare.Item>, move: Boolean) {
+        val pool = currentPool
+        val key = vaultPassword
+        val onDone: (() -> Unit)? = if (move) {
+            { deleteOriginals(items.map { it.uri }) }
+        } else null
+        runVaultOperation(
+            title = if (move) "Moving ${items.size} to vault" else "Copying ${items.size} to vault",
+            pool = pool, key = key, onSuccess = onDone
+        ) { progress ->
+            var ok = 0
+            items.forEachIndexed { i, item ->
+                progress.update(i, items.size, "Vaulting ${item.name} (${i + 1}/${items.size})…")
+                runCatching {
+                    vaultVolume.vault(item.name, item.bytes, key, pool, System.currentTimeMillis(), progress)
+                }.onSuccess { ok++ }
+            }
+            "Vaulted $ok of ${items.size} file${if (items.size == 1) "" else "s"}."
+        }
+    }
+
+    private fun deleteOriginals(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                val pi = MediaStore.createDeleteRequest(contentResolver, uris)
+                deleteOriginalsLauncher.launch(
+                    androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
+                )
+            }.onFailure {
+                Toast.makeText(this, "Vaulted, but couldn't remove the originals automatically.", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            var n = 0
+            uris.forEach { runCatching { n += contentResolver.delete(it, null, null) } }
+            Toast.makeText(this, "Removed $n original${if (n == 1) "" else "s"}.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun processVaultFileSelection(uri: Uri) {
         if (vaultPassword.isBlank()) {
             Toast.makeText(this, "Vault is locked. Unlock with your code first.", Toast.LENGTH_LONG).show()
@@ -640,6 +713,7 @@ class MainActivity : AppCompatActivity() {
         title: String,
         pool: List<java.io.File>,
         key: String,
+        onSuccess: (() -> Unit)? = null,
         work: (VaultVolume.Progress) -> String
     ) {
         val progressText = TextView(this).apply {
@@ -694,6 +768,7 @@ class MainActivity : AppCompatActivity() {
                 result.onSuccess { msg ->
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     refreshVaultUi()
+                    onSuccess?.invoke()
                 }.onFailure { e ->
                     Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
