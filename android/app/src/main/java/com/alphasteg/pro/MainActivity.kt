@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity() {
         // Show whatever the library already knew, then sync in the background.
         val known = library.load().values.sortedBy { it.name.lowercase() }
         renderPoolDisks(known)
-        updateStorageBar(known.sumOf { it.size })
+        updateStorageBar(known.sumOf { it.size }, known.size)
         renderVaultedFiles()
         autoSyncOnStartup()
     }
@@ -308,7 +308,7 @@ class MainActivity : AppCompatActivity() {
             val result = library.sync(scanned)
             runOnUiThread {
                 renderPoolDisks(result.tracks)
-                updateStorageBar(result.totalBytes)
+                updateStorageBar(result.totalBytes, result.tracks.size)
                 val poolSize = formatSize(result.totalBytes)
                 tvVaultStats.text = getString(
                     R.string.vault_stats_synced,
@@ -429,8 +429,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Draw the used / free bar from device storage and overlay the pool size. */
-    private fun updateStorageBar(poolBytes: Long) {
+    /**
+     * Three-tier storage view: whole-device usage (the bar and line 1), the music
+     * pool that forms the vault (line 2), and the granular vault usage (line 3).
+     */
+    private fun updateStorageBar(poolBytes: Long, trackCount: Int = 0) {
         val path = Environment.getExternalStorageDirectory() ?: return
         val stat = android.os.StatFs(path.path)
         val total = stat.totalBytes
@@ -444,12 +447,17 @@ class MainActivity : AppCompatActivity() {
         barUsed.requestLayout()
         barFree.requestLayout()
 
-        val poolPct = if (total > 0) poolBytes.toDouble() / total * 100.0 else 0.0
-        tvStorageDetail.text = String.format(
-            Locale.US,
-            "%s used of %s  •  FLAC pool %s (%.2f%% of volume)",
-            formatSize(used), formatSize(total), formatSize(poolBytes), poolPct
-        )
+        val vault = vaultStore.usage()
+        tvStorageDetail.text = buildString {
+            append(String.format(Locale.US, "Device: %s used of %s\n", formatSize(used), formatSize(total)))
+            append(String.format(Locale.US, "Music pool: %d FLAC carriers · %s\n", trackCount, formatSize(poolBytes)))
+            append(String.format(
+                Locale.US,
+                "Vault: %d file%s · %s stored (%s original)",
+                vault.fileCount, if (vault.fileCount == 1) "" else "s",
+                formatSize(vault.storedBytes), formatSize(vault.originalBytes)
+            ))
+        }
     }
 
     private fun buildTrackRow(track: FlacTrack): View {

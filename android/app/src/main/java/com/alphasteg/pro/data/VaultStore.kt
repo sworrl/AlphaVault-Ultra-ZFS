@@ -102,6 +102,32 @@ class VaultStore(context: Context) {
     fun delete(fileId: String): Boolean =
         File(baseDir, fileId).deleteRecursively()
 
+    /** Wipe every vaulted file. Used by the duress path. */
+    fun wipeAll(): Boolean {
+        val ok = baseDir.deleteRecursively()
+        baseDir.mkdirs()
+        return ok
+    }
+
+    data class Usage(val fileCount: Int, val originalBytes: Long, val storedBytes: Long)
+
+    /** Totals across the vault: file count, sum of original sizes, on-disk chunk bytes. */
+    fun usage(): Usage {
+        val dirs = baseDir.listFiles { f -> f.isDirectory } ?: return Usage(0, 0, 0)
+        var count = 0
+        var original = 0L
+        var stored = 0L
+        for (dir in dirs) {
+            val metaFile = File(dir, META)
+            if (!metaFile.exists()) continue
+            count++
+            runCatching { JSONObject(metaFile.readText()).getLong("originalSize") }
+                .getOrNull()?.let { original += it }
+            dir.listFiles()?.forEach { f -> if (f.isFile) stored += f.length() }
+        }
+        return Usage(count, original, stored)
+    }
+
     companion object {
         private const val META = "meta.json"
         private const val DATA_CHUNKS = 4
