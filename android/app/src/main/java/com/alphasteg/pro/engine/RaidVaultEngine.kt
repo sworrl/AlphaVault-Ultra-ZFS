@@ -1,22 +1,21 @@
 package com.alphasteg.pro.engine
 
 import java.security.MessageDigest
-import kotlin.experimental.xor
 
 /**
- * AlphaVault ZFS RAID-Z2 + Hot Spare Engine
- * Features:
- * - Dynamic Pool Scaling (whole music library auto-discovery or manual disk selection)
- * - RAID-Z2 Dual Parity (P XOR Parity + Q Weighted Galois Parity)
- * - Hot Spare Mirrored Replication across distinct album folders
- * - Multi-Album Swapping Tolerance (swap/delete several albums without data loss or resilvering)
+ * RAID-Z2 / RAID-6 engine with real dual parity.
+ *
+ * Parity is genuine Reed-Solomon over GF(2^8), the same math ZFS RAID-Z2 and
+ * Linux md-raid6 use (H. P. Anvin, "The mathematics of RAID-6"):
+ *   P = XOR of the data chunks
+ *   Q = sum over i of g^i * D_i in GF(2^8)
+ * From P and Q, ANY two lost data chunks are recovered by solving the 2x2 linear
+ * system over the field. On top of that, chunks are mirrored to hot spares, so
+ * losing whole albums is tolerated even beyond the two-parity guarantee.
  */
 object RaidVaultEngine {
 
-    enum class PoolMode {
-        AUTO_WHOLE_LIBRARY,
-        MANUAL_DISKS
-    }
+    enum class PoolMode { AUTO_WHOLE_LIBRARY, MANUAL_DISKS }
 
     data class VaultChunkInfo(
         val chunkIndex: Int,
@@ -32,60 +31,32 @@ object RaidVaultEngine {
         val fileId: String
     )
 
-    // Split file into N Data Chunks + 2 Parity Chunks (P & Q) + Hot Spare Mirrored Copies
     fun encodeRaidZ2WithHotSpares(
         fileBytes: ByteArray,
         numDataChunks: Int = 4,
         enableHotSpares: Boolean = true
     ): RaidZ2Result {
         val totalLen = fileBytes.size
-        val chunkSize = (totalLen + numDataChunks - 1) / numDataChunks
+        val chunkSize = maxOf(1, (totalLen + numDataChunks - 1) / numDataChunks)
         val paddedLen = chunkSize * numDataChunks
 
         val padded = ByteArray(paddedLen)
         System.arraycopy(fileBytes, 0, padded, 0, totalLen)
 
-        // 1. Data Chunks
-        val dataChunks = mutableListOf<ByteArray>()
-        for (i in 0 until numDataChunks) {
-            val chunk = ByteArray(chunkSize)
-            System.arraycopy(padded, i * chunkSize, chunk, 0, chunkSize)
-            dataChunks.add(chunk)
+        val dataChunks = Array(numDataChunks) { i ->
+            padded.copyOfRange(i * chunkSize, (i + 1) * chunkSize)
         }
 
-        // 2. Parity P Chunk (XOR)
-        val parityP = ByteArray(chunkSize)
-        for (i in 0 until chunkSize) {
-            var pVal = 0.toByte()
-            for (c in dataChunks) {
-                pVal = pVal xor c[i]
-            }
-            parityP[i] = pVal
-        }
+        val parityP = computeP(dataChunks, chunkSize)
+        val parityQ = computeQ(dataChunks, chunkSize)
 
-        // 3. Parity Q Chunk (Galois Shift-XOR for RAID-Z2)
-        val parityQ = ByteArray(chunkSize)
-        for (i in 0 until chunkSize) {
-            var qVal = 0.toByte()
-            for (idx in dataChunks.indices) {
-                val weight = (idx + 1).toByte()
-                qVal = qVal xor (dataChunks[idx][i] xor weight)
-            }
-            parityQ[i] = qVal
-        }
-
-        val allChunks = mutableListOf<VaultChunkInfo>()
-
-        // Add Data Chunks
+        val allChunks = ArrayList<VaultChunkInfo>()
         dataChunks.forEachIndexed { idx, bytes ->
             allChunks.add(VaultChunkInfo(idx, isParity = false, isHotSpare = false, data = bytes))
         }
-
-        // Add Parity P & Q
         allChunks.add(VaultChunkInfo(numDataChunks, isParity = true, isHotSpare = false, data = parityP))
         allChunks.add(VaultChunkInfo(numDataChunks + 1, isParity = true, isHotSpare = false, data = parityQ))
 
-        // 4. Hot Spare Replication (Mirror all chunks into Hot Spare slots)
         if (enableHotSpares) {
             val primaryCount = allChunks.size
             for (i in 0 until primaryCount) {
@@ -101,68 +72,123 @@ object RaidVaultEngine {
             }
         }
 
-        val fileId = generateFileId("file_${System.currentTimeMillis()}")
-        return RaidZ2Result(allChunks, totalLen, chunkSize, fileId)
+        return RaidZ2Result(allChunks, totalLen, chunkSize, generateFileId("file_${System.currentTimeMillis()}"))
     }
 
-    // Reconstruct file even if multiple albums / FLAC tracks were deleted/swapped out
+    private fun computeP(data: Array<ByteArray>, chunkSize: Int): ByteArray {
+        val p = ByteArray(chunkSize)
+        for (chunk in data) for (i in 0 until chunkSize) p[i] = (p[i].toInt() xor chunk[i].toInt()).toByte()
+        return p
+    }
+
+    private fun computeQ(data: Array<ByteArray>, chunkSize: Int): ByteArray {
+        val q = ByteArray(chunkSize)
+        val tmp = ByteArray(chunkSize)
+        for (idx in data.indices) {
+            GaloisField.mulInto(GaloisField.gExp(idx), data[idx], tmp)
+            for (i in 0 until chunkSize) q[i] = (q[i].toInt() xor tmp[i].toInt()).toByte()
+        }
+        return q
+    }
+
+    /**
+     * Reconstruct the original bytes from whatever chunks survive. A data chunk
+     * is taken from its primary or its hot-spare mirror; up to two data chunks
+     * missing from BOTH are rebuilt from the P and Q parity by real RS recovery.
+     */
     fun reconstructRaidZ2(
         availableChunks: Map<Int, ByteArray>,
         totalLen: Int,
         chunkSize: Int,
         numDataChunks: Int = 4
     ): ByteArray {
-        val dataChunks = Array<ByteArray?>(numDataChunks) { null }
+        val mirrorOffset = numDataChunks + 2
+        fun get(idx: Int): ByteArray? = availableChunks[idx] ?: availableChunks[idx + mirrorOffset]
 
-        // Fill from primary or hot spare data chunks
-        for (i in 0 until numDataChunks) {
-            dataChunks[i] = availableChunks[i] ?: availableChunks[i + (numDataChunks + 2)]
-        }
+        val data = arrayOfNulls<ByteArray>(numDataChunks)
+        for (i in 0 until numDataChunks) data[i] = get(i)
+        val pParity = get(numDataChunks)
+        val qParity = get(numDataChunks + 1)
 
-        val missingCount = dataChunks.count { it == null }
+        val missing = (0 until numDataChunks).filter { data[it] == null }
 
-        if (missingCount == 0) {
-            return reassemble(dataChunks, totalLen, chunkSize)
-        }
-
-        // Single Missing Chunk Recovery via Parity P (XOR)
-        if (missingCount == 1) {
-            val mIdx = dataChunks.indexOf(null)
-            val parityP = availableChunks[numDataChunks] ?: availableChunks[numDataChunks + (numDataChunks + 2)]
-
-            if (parityP != null) {
-                val recovered = ByteArray(chunkSize)
-                for (i in 0 until chunkSize) {
-                    var rVal = parityP[i]
-                    for (idx in dataChunks.indices) {
-                        if (idx != mIdx) {
-                            rVal = rVal xor dataChunks[idx]!![i]
-                        }
-                    }
-                    recovered[i] = rVal
+        when (missing.size) {
+            0 -> { /* all present */ }
+            1 -> {
+                val x = missing[0]
+                data[x] = when {
+                    pParity != null -> recoverOneFromP(data, pParity, x, chunkSize)
+                    qParity != null -> recoverOneFromQ(data, qParity, x, chunkSize)
+                    else -> throw IllegalStateException("Chunk $x lost and no parity available.")
                 }
-                dataChunks[mIdx] = recovered
-                return reassemble(dataChunks, totalLen, chunkSize)
             }
+            2 -> {
+                if (pParity == null || qParity == null) {
+                    throw IllegalStateException("Two chunks lost but both P and Q parity are not available.")
+                }
+                recoverTwo(data, pParity, qParity, missing[0], missing[1], chunkSize)
+            }
+            else -> throw IllegalStateException(
+                "Cannot recover: ${missing.size} data chunks missing (max 2 with dual parity + mirrors)."
+            )
         }
 
-        throw IllegalArgumentException("Cannot recover file: Too many album tracks removed ($missingCount missing). Maximum redundancy exceeded.")
+        val assembled = ByteArray(chunkSize * numDataChunks)
+        for (i in 0 until numDataChunks) System.arraycopy(data[i]!!, 0, assembled, i * chunkSize, chunkSize)
+        return assembled.copyOf(totalLen)
     }
 
-    private fun reassemble(dataChunks: Array<ByteArray?>, totalLen: Int, chunkSize: Int): ByteArray {
-        val assembled = ByteArray(chunkSize * dataChunks.size)
-        for (i in dataChunks.indices) {
-            System.arraycopy(dataChunks[i]!!, 0, assembled, i * chunkSize, chunkSize)
+    private fun recoverOneFromP(data: Array<ByteArray?>, p: ByteArray, x: Int, chunkSize: Int): ByteArray {
+        val out = ByteArray(chunkSize)
+        for (i in 0 until chunkSize) {
+            var v = p[i].toInt() and 0xFF
+            for (j in data.indices) if (j != x) v = v xor (data[j]!![i].toInt() and 0xFF)
+            out[i] = v.toByte()
         }
-        val result = ByteArray(totalLen)
-        System.arraycopy(assembled, 0, result, 0, totalLen)
-        return result
+        return out
     }
 
-    fun generateFileId(filename: String): String {
+    private fun recoverOneFromQ(data: Array<ByteArray?>, q: ByteArray, x: Int, chunkSize: Int): ByteArray {
+        // D_x = (Q ^ sum_{i!=x} g^i D_i) * g^{-x}
+        val invGx = GaloisField.inv(GaloisField.gExp(x))
+        val out = ByteArray(chunkSize)
+        for (i in 0 until chunkSize) {
+            var acc = q[i].toInt() and 0xFF
+            for (j in data.indices) if (j != x) acc = acc xor GaloisField.mul(GaloisField.gExp(j), data[j]!![i].toInt() and 0xFF)
+            out[i] = GaloisField.mul(acc, invGx).toByte()
+        }
+        return out
+    }
+
+    private fun recoverTwo(
+        data: Array<ByteArray?>, p: ByteArray, q: ByteArray, x: Int, y: Int, chunkSize: Int
+    ) {
+        // Pd = D_x ^ D_y ; Qd = g^x D_x ^ g^y D_y  (from stored P/Q minus survivors)
+        // => D_x = (Qd ^ g^y * Pd) / (g^x ^ g^y) ; D_y = Pd ^ D_x
+        val gx = GaloisField.gExp(x)
+        val gy = GaloisField.gExp(y)
+        val denomInv = GaloisField.inv(gx xor gy)
+        val dx = ByteArray(chunkSize)
+        val dy = ByteArray(chunkSize)
+        for (i in 0 until chunkSize) {
+            var pd = p[i].toInt() and 0xFF
+            var qd = q[i].toInt() and 0xFF
+            for (j in data.indices) if (j != x && j != y) {
+                val dj = data[j]!![i].toInt() and 0xFF
+                pd = pd xor dj
+                qd = qd xor GaloisField.mul(GaloisField.gExp(j), dj)
+            }
+            val vx = GaloisField.mul(qd xor GaloisField.mul(gy, pd), denomInv)
+            dx[i] = vx.toByte()
+            dy[i] = (pd xor vx).toByte()
+        }
+        data[x] = dx
+        data[y] = dy
+    }
+
+    fun generateFileId(seed: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        val input = "$filename:${System.currentTimeMillis()}"
-        val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
+        val hash = digest.digest("$seed:${System.currentTimeMillis()}".toByteArray(Charsets.UTF_8))
         return hash.joinToString("") { "%02x".format(it) }.substring(0, 16)
     }
 }

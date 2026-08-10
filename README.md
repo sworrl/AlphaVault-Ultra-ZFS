@@ -136,14 +136,14 @@ The stored envelope is `magic || salt || aesNonce || chachaNonce || ciphertext |
 
 - pads it and cuts it into `N` data chunks (default 4),
 - computes a **P** parity chunk (XOR across the data chunks),
-- computes a **Q** parity chunk (a weighted shift-XOR across the data chunks),
+- computes a **Q** parity chunk as a real Reed-Solomon syndrome, `Q = Σ gⁱ·Dᵢ` over GF(2⁸),
 - appends a **hot-spare mirror**: a full copy of every chunk above, data and parity alike.
 
 So a default encode produces 4 data + 2 parity = 6 primary chunks, plus 6 mirrored spares, 12 in all. Each chunk is meant to ride inside a separate FLAC track.
 
-Recovery, in `reconstructRaidZ2`, works like this: for each data chunk it first looks for the primary copy, then the hot-spare mirror. If every data chunk is found that way, the file reassembles directly. If exactly one data chunk is missing from both its primary and its mirror, it is rebuilt from the P parity by XOR. Beyond a single missing data chunk with no surviving mirror, recovery raises an error.
+The parity is the genuine RAID-6 / RAID-Z2 math, the same field and algorithm ZFS and Linux md-raid6 use (primitive polynomial `0x11d`, generator `g = 2`; see H. P. Anvin, "The mathematics of RAID-6"). It is implemented in `GaloisField` and `RaidVaultEngine`, not approximated. Recovery, in `reconstructRaidZ2`, resolves each data chunk from its primary or its hot-spare mirror; then **any two** data chunks missing from both are rebuilt from P and Q by solving the 2×2 linear system over the field. A single chunk can also be rebuilt from Q alone when P is the one that is gone.
 
-That is the honest boundary: the hot-spare mirror means you can lose whole tracks freely as long as each chunk survives in one of its two homes, and the P parity buys back one further data chunk on top of that. The Q parity is computed and stored but the current reconstruction path does not use it, so do not count on two-independent-chunk recovery yet.
+So the guarantee is real: lose any two carriers and the file still restores from parity, and the hot-spare mirror tolerates losing whole albums on top of that. `RaidReedSolomonTest` proves it by dropping every pair of data chunks with no mirror present and restoring exactly, plus a GF(2⁸) inverse/distributivity check.
 
 ## Build the APK
 
