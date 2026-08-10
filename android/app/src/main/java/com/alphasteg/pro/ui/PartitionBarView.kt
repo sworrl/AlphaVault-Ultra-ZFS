@@ -35,11 +35,32 @@ class PartitionBarView @JvmOverloads constructor(
     private val barH = dp(30f)
     private val legendRowH = dp(20f)
 
+    /** Invoked with the tapped segment. */
+    var onSegmentClick: ((Segment) -> Unit)? = null
+
+    init { isClickable = true }
+
     fun setSegments(list: List<Segment>) {
         segments = list.filter { it.bytes > 0 }
         requestLayout()
         invalidate()
     }
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_UP && event.y <= barH + dp(4f) && segments.isNotEmpty()) {
+            val total = segments.sumOf { it.bytes }.coerceAtLeast(1L).toDouble()
+            val left = dp(1f); val right = width - dp(1f)
+            var x = left.toDouble()
+            for (seg in segments) {
+                val w = seg.bytes / total * (right - left)
+                if (event.x in x..(x + w)) { performClick(); onSegmentClick?.invoke(seg); return true }
+                x += w
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean = super.performClick()
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)

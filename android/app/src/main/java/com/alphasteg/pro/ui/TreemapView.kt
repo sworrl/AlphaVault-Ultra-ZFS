@@ -18,10 +18,15 @@ class TreemapView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
 ) : View(context, attrs, defStyle) {
 
-    data class Item(val label: String, val bytes: Long, val color: Int)
+    data class Item(val label: String, val bytes: Long, val color: Int, val tag: Any? = null)
 
     private var items: List<Item> = emptyList()
     private var rects: List<RectF> = emptyList()
+
+    /** Invoked with the tapped tile's item. */
+    var onTileClick: ((Item) -> Unit)? = null
+
+    init { isClickable = true }
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
@@ -32,9 +37,16 @@ class TreemapView @JvmOverloads constructor(
     private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#DDE6F2"); textSize = dp(9.5f) }
 
     fun setItems(list: List<Item>) {
+        val firstFill = items.isEmpty() && list.isNotEmpty()
         items = list.filter { it.bytes > 0 }.sortedByDescending { it.bytes }
         rects = emptyList()
+        requestLayout()
         invalidate()
+        if (firstFill) {
+            alpha = 0f
+            animate().cancel()
+            animate().alpha(1f).setDuration(320).start()
+        }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -117,6 +129,20 @@ class TreemapView @JvmOverloads constructor(
         }
         return out.map { it ?: RectF() }
     }
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_UP) {
+            val idx = rects.indexOfFirst { it.contains(event.x, event.y) }
+            if (idx in items.indices) {
+                performClick()
+                onTileClick?.invoke(items[idx])
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean = super.performClick()
 
     private fun humanSize(bytes: Long): String {
         val mb = bytes / (1024.0 * 1024.0)

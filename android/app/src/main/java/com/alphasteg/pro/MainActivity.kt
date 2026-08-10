@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStorageDetail: TextView
     private lateinit var partitionBar: com.alphasteg.pro.ui.PartitionBarView
     private lateinit var treemap: com.alphasteg.pro.ui.TreemapView
+    private lateinit var vaultTreemap: com.alphasteg.pro.ui.TreemapView
     private lateinit var tvEmptyDisks: TextView
     private lateinit var tvEmptyVault: TextView
     private lateinit var vaultFileList: LinearLayout
@@ -165,6 +166,7 @@ class MainActivity : AppCompatActivity() {
         tvStorageDetail = findViewById(R.id.tvStorageDetail)
         partitionBar = findViewById(R.id.partitionBar)
         treemap = findViewById(R.id.treemap)
+        vaultTreemap = findViewById(R.id.vaultTreemap)
         tvEmptyDisks = findViewById(R.id.tvEmptyDisks)
         tvEmptyVault = findViewById(R.id.tvEmptyVault)
         vaultFileList = findViewById(R.id.vaultFileList)
@@ -581,10 +583,16 @@ class MainActivity : AppCompatActivity() {
             com.alphasteg.pro.ui.TreemapView.Item(
                 label = t.name.substringBeforeLast('.'),
                 bytes = t.size,
-                color = android.graphics.Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f))
+                color = android.graphics.Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f)),
+                tag = t
             )
         }
         treemap.setItems(items)
+        treemap.onTileClick = { item ->
+            (item.tag as? FlacTrack)?.let {
+                Toast.makeText(this, "${it.name}\n${formatSize(it.size)} · ${it.folder.ifEmpty { "Music" }}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     /**
@@ -608,6 +616,9 @@ class MainActivity : AppCompatActivity() {
                 com.alphasteg.pro.ui.PartitionBarView.Segment("Free", available, 0xFF17324a.toInt())
             )
         )
+        partitionBar.onSegmentClick = { seg ->
+            Toast.makeText(this, "${seg.label}: ${formatSize(seg.bytes)}", Toast.LENGTH_SHORT).show()
+        }
 
         tvStorageDetail.text = buildString {
             append(String.format(Locale.US, "Device: %s used of %s\n", formatSize(used), formatSize(total)))
@@ -895,10 +906,27 @@ class MainActivity : AppCompatActivity() {
             else "${entries.size} files · sorted by ${vaultSortMode.label} · tap to change"
         if (sorted.isEmpty()) {
             tvEmptyVault.visibility = View.VISIBLE
+            vaultTreemap.visibility = View.GONE
+            vaultTreemap.setItems(emptyList())
             return
         }
         tvEmptyVault.visibility = View.GONE
         for (e in sorted) vaultFileList.addView(buildVaultedRow(e))
+
+        // WinDirStat-style map of the vault: each file sized by original bytes,
+        // colored by type; tap a tile to open its menu.
+        vaultTreemap.visibility = View.VISIBLE
+        vaultTreemap.setItems(sorted.map { e ->
+            com.alphasteg.pro.ui.TreemapView.Item(
+                label = e.name.substringBeforeLast('.'),
+                bytes = e.originalSize.coerceAtLeast(1),
+                color = kindOf(e.name).color,
+                tag = e
+            )
+        })
+        vaultTreemap.onTileClick = { item ->
+            (item.tag as? VaultVolume.Entry)?.let { showVaultedFileMenu(it) }
+        }
     }
 
     private fun cycleVaultSort() {
