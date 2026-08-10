@@ -15,6 +15,9 @@
     <string name="pool_mode_manual">Manual FLAC Disks Selection</string>
     <string name="btn_encrypt_vault">+ ENCRYPT &amp; VAULT</string>
     <string name="btn_auto_discover">🔄 SYNC LIBRARY</string>
+    <string name="pool_disks_header">STORAGE POOL DISKS (FLAC CARRIERS)</string>
+    <string name="disks_empty">No FLAC carriers found.\nTransfer FLAC tracks into your Music folder, then tap SYNC LIBRARY.</string>
+    <string name="storage_scanning">Scanning storage…</string>
     <string name="vault_files_header">VAULTED SENSITIVE FILES</string>
     <string name="vault_empty">No vaulted files found.\nTap \'+ ENCRYPT &amp; VAULT\' to store sensitive files safely.</string>
     <string name="vault_stats_decoy">0 Vault Files • Decoy Mode Active</string>

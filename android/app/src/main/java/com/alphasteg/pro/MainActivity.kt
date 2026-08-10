@@ -44,6 +44,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var topBar: View
     private lateinit var tvModeBadge: TextView
     private lateinit var tvVaultStats: TextView
+    private lateinit var tvStorageDetail: TextView
+    private lateinit var barUsed: View
+    private lateinit var barFree: View
+    private lateinit var poolDiskList: LinearLayout
+    private lateinit var tvEmptyDisks: TextView
     private lateinit var tvEmptyVault: TextView
     private lateinit var vaultFileList: LinearLayout
     private lateinit var btnAddVaultFile: Button
@@ -117,6 +122,11 @@ class MainActivity : AppCompatActivity() {
         topBar = findViewById(R.id.topBar)
         tvModeBadge = findViewById(R.id.tvModeBadge)
         tvVaultStats = findViewById(R.id.tvVaultStats)
+        tvStorageDetail = findViewById(R.id.tvStorageDetail)
+        barUsed = findViewById(R.id.barUsed)
+        barFree = findViewById(R.id.barFree)
+        poolDiskList = findViewById(R.id.poolDiskList)
+        tvEmptyDisks = findViewById(R.id.tvEmptyDisks)
         tvEmptyVault = findViewById(R.id.tvEmptyVault)
         vaultFileList = findViewById(R.id.vaultFileList)
         btnAddVaultFile = findViewById(R.id.btnAddVaultFile)
@@ -154,7 +164,9 @@ class MainActivity : AppCompatActivity() {
         setupWebSyncServer()
 
         // Show whatever the library already knew, then sync in the background.
-        renderLibrary(library.load().values.sortedBy { it.name.lowercase() })
+        val known = library.load().values.sortedBy { it.name.lowercase() }
+        renderPoolDisks(known)
+        updateStorageBar(known.sumOf { it.size })
         autoSyncOnStartup()
     }
 
@@ -285,7 +297,8 @@ class MainActivity : AppCompatActivity() {
             val scanned = queryFlacTracks()
             val result = library.sync(scanned)
             runOnUiThread {
-                renderLibrary(result.tracks)
+                renderPoolDisks(result.tracks)
+                updateStorageBar(result.totalBytes)
                 val poolSize = formatSize(result.totalBytes)
                 tvVaultStats.text = getString(
                     R.string.vault_stats_synced,
@@ -389,21 +402,44 @@ class MainActivity : AppCompatActivity() {
         return out
     }
 
-    private fun renderLibrary(tracks: List<FlacTrack>) {
+    private fun renderPoolDisks(tracks: List<FlacTrack>) {
         // Remove any previously rendered rows, keep the empty-state placeholder.
-        for (i in vaultFileList.childCount - 1 downTo 0) {
-            if (vaultFileList.getChildAt(i) !== tvEmptyVault) {
-                vaultFileList.removeViewAt(i)
+        for (i in poolDiskList.childCount - 1 downTo 0) {
+            if (poolDiskList.getChildAt(i) !== tvEmptyDisks) {
+                poolDiskList.removeViewAt(i)
             }
         }
         if (tracks.isEmpty()) {
-            tvEmptyVault.visibility = View.VISIBLE
+            tvEmptyDisks.visibility = View.VISIBLE
             return
         }
-        tvEmptyVault.visibility = View.GONE
+        tvEmptyDisks.visibility = View.GONE
         for (t in tracks) {
-            vaultFileList.addView(buildTrackRow(t))
+            poolDiskList.addView(buildTrackRow(t))
         }
+    }
+
+    /** Draw the used / free bar from device storage and overlay the pool size. */
+    private fun updateStorageBar(poolBytes: Long) {
+        val path = Environment.getExternalStorageDirectory() ?: return
+        val stat = android.os.StatFs(path.path)
+        val total = stat.totalBytes
+        val available = stat.availableBytes
+        val used = (total - available).coerceAtLeast(0)
+
+        // Weights: used slice vs free slice of the whole device volume.
+        val usedW = if (total > 0) used.toFloat() / total else 0f
+        (barUsed.layoutParams as LinearLayout.LayoutParams).weight = usedW
+        (barFree.layoutParams as LinearLayout.LayoutParams).weight = (1f - usedW).coerceAtLeast(0f)
+        barUsed.requestLayout()
+        barFree.requestLayout()
+
+        val poolPct = if (total > 0) poolBytes.toDouble() / total * 100.0 else 0.0
+        tvStorageDetail.text = String.format(
+            Locale.US,
+            "%s used of %s  •  FLAC pool %s (%.2f%% of volume)",
+            formatSize(used), formatSize(total), formatSize(poolBytes), poolPct
+        )
     }
 
     private fun buildTrackRow(track: FlacTrack): View {
@@ -506,7 +542,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshVaultList() {
         if (isDecoyMode) {
-            renderLibrary(emptyList())
+            renderPoolDisks(emptyList())
             tvVaultStats.text = getString(R.string.vault_stats_decoy)
             return
         }

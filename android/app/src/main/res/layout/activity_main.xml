@@ -118,6 +118,39 @@
                         android:textColor="@color/av_cyan"
                         android:textSize="12sp" />
 
+                    <!-- Graphical storage capacity bar: used (device) + pool overlay -->
+                    <LinearLayout
+                        android:id="@+id/storageBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="16dp"
+                        android:layout_marginTop="14dp"
+                        android:background="@drawable/bg_bar_track"
+                        android:orientation="horizontal"
+                        android:padding="2dp">
+
+                        <View
+                            android:id="@+id/barUsed"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="0"
+                            android:background="@drawable/bg_bar_used" />
+
+                        <View
+                            android:id="@+id/barFree"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:layout_weight="1" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvStorageDetail"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/storage_scanning"
+                        android:textColor="@color/av_text_secondary"
+                        android:textSize="12sp" />
+
                     <!-- Pool Mode Radio Selector -->
                     <RadioGroup
                         android:id="@+id/rgPoolMode"
@@ -178,7 +211,35 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- Vault File List Header -->
+                <!-- Storage Pool Disks (the FLAC carriers) -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:text="@string/pool_disks_header"
+                    android:textColor="@color/av_cyan"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/poolDiskList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvEmptyDisks"
+                        android:layout_width="match_parent"
+                        android:layout_height="100dp"
+                        android:background="@drawable/bg_cyber_card"
+                        android:gravity="center"
+                        android:text="@string/disks_empty"
+                        android:textColor="@color/av_text_disabled"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <!-- Vaulted Sensitive Files (encrypted payloads distributed into the pool) -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -188,7 +249,6 @@
                     android:textSize="12sp"
                     android:textStyle="bold" />
 
-                <!-- List View for Vaulted Files -->
                 <LinearLayout
                     android:id="@+id/vaultFileList"
                     android:layout_width="match_parent"
