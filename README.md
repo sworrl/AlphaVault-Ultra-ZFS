@@ -31,8 +31,11 @@ A one-terabyte FLAC library is thousands of 16-bit samples per second that nobod
 
 This repository is a fork of [bennjordan/AlphaSteg](https://github.com/bennjordan/AlphaSteg). The upstream project is a desktop steganography server. This fork keeps that server and adds a native Kotlin Android app plus a heavier crypto and storage layer. What each half does, and exactly where they differ, is spelled out below.
 
+> **Early development.** This is a work in progress. Read [Status: what works and what does not](#status-what-works-and-what-does-not) before assuming any feature is finished. Right now the app launches, syncs the FLAC library, and shows storage; the encryption, RAID, and steganography engines are written but not yet verified end to end.
+
 ## Contents
 
+- [Status: what works and what does not](#status-what-works-and-what-does-not)
 - [What the fork adds](#what-the-fork-adds)
 - [Two halves, one repo](#two-halves-one-repo)
 - [The Android app](#the-android-app)
@@ -41,8 +44,32 @@ This repository is a fork of [bennjordan/AlphaSteg](https://github.com/bennjorda
 - [Build the APK](#build-the-apk)
 - [Run the desktop server](#run-the-desktop-server)
 - [Security notes, stated plainly](#security-notes-stated-plainly)
+- [Roadmap](#roadmap)
 - [Project layout](#project-layout)
 - [Fork attribution and license](#fork-attribution-and-license)
+
+## Status: what works and what does not
+
+Verified by hand on a Pixel-class device running Android 14. Everything else in this README describes code that exists in the repo but has not been run end to end.
+
+**Tested and working**
+
+- The app builds, installs, and launches through the lock screen into the main UI.
+- The UI renders: floating navigation dock, the three panels, and a full-bleed adaptive launcher icon.
+- FLAC library sync. On startup and on a manual **Sync Library** tap, the app scans the standard media folders for `.flac` files and lists them as pool disks. Verified with 24 tracks across two albums.
+- The storage bar. Used and free device space plus total FLAC pool size, read from `StatFs`.
+
+**Written but not yet verified end to end**
+
+- The 768-bit cascade encrypt and decrypt round trip (`CryptoEngine`).
+- RAID-Z2 chunking and reconstruction (`RaidVaultEngine`).
+- LSB embed and extract into real FLAC carriers (`LsbStegoEngine`).
+- Biometric unlock and the decoy PIN (`LockScreenActivity`, `SecurityManager`).
+- The **Encrypt & Vault** action. It currently encrypts the file and computes RAID chunks in memory, then shows a summary. It does not yet write those chunks into FLAC tracks or persist a vaulted-file record, so nothing is stored on disk yet.
+- The Android **Wi-Fi Sync** switch. It starts a foreground service with a notification; there is no HTTP server behind it yet.
+- The spectrum visualizer draws, but it is decorative and not tied to real audio.
+
+See [Roadmap](#roadmap) for features that are planned but not started.
 
 ## What the fork adds
 
@@ -146,6 +173,16 @@ python main.py                    # serves http://127.0.0.1:8000
 - **Two KDFs, one on purpose and one to watch.** The Android app derives keys with PBKDF2-HMAC-SHA512 at 500,000 iterations; the Python server uses PBKDF2-HMAC-SHA256 at 50,000. Envelopes are not interchangeable between the two halves, and their magic prefixes (`AVMAX768` versus `AESA`) differ.
 - **LSB breaks under re-encoding.** The Android LSB engine writes one payload bit per 16-bit PCM sample behind the two-byte magic `0xAF 0x55` and a four-byte length. Re-encoding the carrier to a lossy format, or any lossy transcode, destroys the hidden bits. Keep carriers lossless end to end.
 - **This is a hobby-grade tool.** The cryptography uses standard primitives correctly at the envelope level, but the project has not had a formal review. Do not stake anything you cannot afford to lose on it.
+
+## Roadmap
+
+Planned, not yet built:
+
+- **Duress wipe.** A separate duress PIN or pattern that, once entered, destroys the vault keys and stored data instead of unlocking. This is buildable with the current lock screen.
+- **Duress by fingerprint has a platform limit worth stating up front.** Android's `BiometricPrompt` reports only that *a* enrolled fingerprint matched. It does not tell the app *which* finger authenticated. So "use this specific finger as a duress trigger" cannot be built on the standard biometric API; the OS never exposes finger identity. A duress PIN or pattern is the workable path. A fingerprint-based duress would need a non-standard sensor integration that most devices do not offer.
+- **Disguise mode.** Present the app under an innocuous name and icon (a calculator, for example) using Android activity-alias entries that can be switched at runtime.
+- **Server-linked libraries.** A desktop-side companion so a phone or DAC can sync FLAC carriers to and from a home server for backup and offload, rather than transferring by hand.
+- **Finish the vault path.** Wire **Encrypt & Vault** through to actually writing RAID chunks into FLAC carriers and recording vaulted-file entries, then verify decrypt and reconstruction on real files.
 
 ## Project layout
 
