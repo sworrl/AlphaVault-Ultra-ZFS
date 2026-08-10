@@ -920,7 +920,7 @@ class MainActivity : AppCompatActivity() {
             com.alphasteg.pro.ui.TreemapView.Item(
                 label = e.name.substringBeforeLast('.'),
                 bytes = e.originalSize.coerceAtLeast(1),
-                color = kindOf(e.name).color,
+                color = if (e.colorLabel != 0) e.colorLabel else kindOf(e.name).color,
                 tag = e
             )
         })
@@ -951,7 +951,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildVaultedRow(file: VaultVolume.Entry): View {
-        val kind = kindOf(file.name)
+        val typeKind = kindOf(file.name)
+        // A user color label, if set, overrides the type color for the accent.
+        val accent = if (file.colorLabel != 0) file.colorLabel else typeKind.color
+        val kind = FileKind(typeKind.emoji, accent)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1003,16 +1006,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVaultedFileMenu(file: VaultVolume.Entry) {
-        val options = arrayOf("View in app", "Rename", "Restore to Downloads", "Delete from vault")
+        val options = arrayOf("View in app", "Rename", "Set color label", "Restore to Downloads", "Delete from vault")
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(file.name)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> viewVaultedFile(file)
                     1 -> renameVaultedFile(file)
-                    2 -> restoreVaultedFile(file)
-                    3 -> confirmDeleteVaulted(file)
+                    2 -> pickColorLabel(file)
+                    3 -> restoreVaultedFile(file)
+                    4 -> confirmDeleteVaulted(file)
                 }
+            }
+            .show()
+    }
+
+    private val labelColors = listOf(
+        0 to "None", 0xFFFF5D5D.toInt() to "Red", 0xFFFFA24D.toInt() to "Orange",
+        0xFFFFD93D.toInt() to "Yellow", 0xFF2ECC71.toInt() to "Green",
+        0xFF00F2FE.toInt() to "Cyan", 0xFF9D4EDD.toInt() to "Purple", 0xFFFF7FD1.toInt() to "Pink"
+    )
+
+    private fun pickColorLabel(file: VaultVolume.Entry) {
+        val names = labelColors.map { it.second }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Color label")
+            .setItems(names) { _, i ->
+                val color = labelColors[i].first
+                val pool = currentPool
+                Thread {
+                    runCatching { vaultVolume.setColor(file.fileId, color, vaultPassword, pool) }
+                    runOnUiThread { refreshVaultUi() }
+                }.start()
             }
             .show()
     }

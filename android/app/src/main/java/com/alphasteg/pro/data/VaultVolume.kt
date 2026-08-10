@@ -34,7 +34,8 @@ class VaultVolume {
         val chunkSize: Int,
         val totalLen: Int,
         val numData: Int,
-        val createdAt: Long
+        val createdAt: Long,
+        val colorLabel: Int = 0   // 0 = none; otherwise an ARGB color the user assigned
     )
 
     data class Index(val generation: Long, val entries: List<Entry>)
@@ -189,6 +190,13 @@ class VaultVolume {
         saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
     }
 
+    /** Assign (or clear, with 0) a color label to a vaulted file. */
+    fun setColor(fileId: String, color: Int, password: String, pool: List<File>) {
+        val current = loadIndex(pool, password)
+        val updated = current.entries.map { if (it.fileId == fileId) it.copy(colorLabel = color) else it }
+        saveIndex(Index(current.generation + 1, updated), pool, password, noProgress, 0, 1)
+    }
+
     fun delete(fileId: String, password: String, pool: List<File>) {
         for (f in pool) {
             if (!FlacCarrierEngine.isFlacFile(f)) continue
@@ -283,6 +291,7 @@ class VaultVolume {
                 put("fileId", e.fileId); put("name", e.name); put("originalSize", e.originalSize)
                 put("chunkCount", e.chunkCount); put("chunkSize", e.chunkSize)
                 put("totalLen", e.totalLen); put("numData", e.numData); put("createdAt", e.createdAt)
+                put("colorLabel", e.colorLabel)
             })
         }
         return JSONObject().put("generation", index.generation).put("entries", arr).toString()
@@ -298,7 +307,7 @@ class VaultVolume {
                 Entry(
                     o.getString("fileId"), o.getString("name"), o.getLong("originalSize"),
                     o.getInt("chunkCount"), o.getInt("chunkSize"), o.getInt("totalLen"),
-                    o.getInt("numData"), o.getLong("createdAt")
+                    o.getInt("numData"), o.getLong("createdAt"), o.optInt("colorLabel", 0)
                 )
             )
         }
