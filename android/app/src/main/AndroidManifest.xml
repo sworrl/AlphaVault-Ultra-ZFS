@@ -90,6 +90,12 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
+        <provider
+            android:name=".VaultContentProvider"
+            android:authorities="com.alphasteg.pro.vault"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Foreground Service for Background DSP Processing -->
         <service
             android:name=".VaultService"

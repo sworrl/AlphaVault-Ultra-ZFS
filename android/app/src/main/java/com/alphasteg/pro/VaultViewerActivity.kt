@@ -66,9 +66,8 @@ class VaultViewerActivity : AppCompatActivity() {
             Kind.IMAGE -> root.addView(imageView(bytes))
             Kind.TEXT -> root.addView(textView(String(bytes, Charsets.UTF_8)))
             Kind.AUDIO -> root.addView(audioView(name, bytes))
-            Kind.OTHER -> root.addView(
-                message("In-app viewing isn't supported for this file type yet (${bytes.size} bytes).\nUse Restore to save it to Downloads.")
-            )
+            Kind.VIDEO -> root.addView(videoView(name, bytes))
+            Kind.OTHER -> root.addView(openWithView(name, bytes))
         }
         setContentView(root)
     }
@@ -89,8 +88,18 @@ class VaultViewerActivity : AppCompatActivity() {
     }
 
     private fun imageView(bytes: ByteArray): View {
-        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            ?: return message("Could not decode this image.")
+        // Decode down to screen size so a huge image never blows the canvas limit.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val dm = resources.displayMetrics
+        val reqW = (dm.widthPixels * 2).coerceAtLeast(1)
+        val reqH = (dm.heightPixels * 2).coerceAtLeast(1)
+        var sample = 1
+        while (bounds.outWidth / sample > reqW || bounds.outHeight / sample > reqH) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            ?: return openWithView("image", bytes)
+
         val scroll = ScrollView(this)
         val iv = ImageView(this).apply {
             setImageBitmap(bmp)
@@ -101,6 +110,49 @@ class VaultViewerActivity : AppCompatActivity() {
         scroll.addView(iv)
         scroll.layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         return scroll
+    }
+
+    private fun videoView(name: String, bytes: ByteArray): View {
+        val container = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+        }
+        val uri = VaultContentProvider.publish(name, bytes)
+        val vv = android.widget.VideoView(this).apply {
+            setVideoURI(uri)
+            setOnPreparedListener { it.isLooping = false; start() }
+            setMediaController(android.widget.MediaController(this@VaultViewerActivity).also { it.setAnchorView(this) })
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+        }
+        container.addView(vv)
+        return container
+    }
+
+    /** For anything we don't render in-app, hand it to the system's default app. */
+    private fun openWithView(name: String, bytes: ByteArray): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+        }
+        container.addView(message("“$name” (${bytes.size} bytes)\nOpen it with your device's default app for this type."))
+        val btn = Button(this).apply { text = "OPEN WITH…" }
+        btn.setOnClickListener { openExternally(name, bytes) }
+        container.addView(btn)
+        return container
+    }
+
+    private fun openExternally(name: String, bytes: ByteArray) {
+        val uri = VaultContentProvider.publish(name, bytes)
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+            ?: "application/octet-stream"
+        val view = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching { startActivity(android.content.Intent.createChooser(view, "Open with")) }
+            .onFailure { Toast.makeText(this, "No app can open this type.", Toast.LENGTH_LONG).show() }
     }
 
     private fun textView(text: String): View {
@@ -166,12 +218,13 @@ class VaultViewerActivity : AppCompatActivity() {
         player = null
     }
 
-    private enum class Kind { IMAGE, TEXT, AUDIO, OTHER }
+    private enum class Kind { IMAGE, TEXT, AUDIO, VIDEO, OTHER }
 
     private fun kindOf(name: String, bytes: ByteArray): Kind {
         val ext = name.substringAfterLast('.', "").lowercase()
         return when (ext) {
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic" -> Kind.IMAGE
+            "mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v" -> Kind.VIDEO
             "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus" -> Kind.AUDIO
             "txt", "md", "markdown", "json", "csv", "log", "xml", "html", "htm",
             "kt", "java", "py", "js", "ts", "css", "yaml", "yml", "ini", "cfg", "conf", "sh" -> Kind.TEXT
