@@ -11,16 +11,20 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.alphasteg.pro.data.AppSettings
 import com.alphasteg.pro.security.SecurityManager
 
 /**
  * Hex-code lock screen. No biometric (Android can't bind a specific finger to
- * duress). Onboarding is mandatory two-step: a master code and a distinct duress
- * code, each at least 8 hex digits. Entering the duress code later wipes the vault.
+ * duress). Onboarding sets a master code and a distinct duress code, each at
+ * least 8 hex digits and each entered twice to confirm. Entering the duress code
+ * later wipes the vault. The keypad reshuffles once per screen by default, or
+ * after every keypress if that option is enabled.
  */
 class LockScreenActivity : AppCompatActivity() {
 
     private lateinit var securityManager: SecurityManager
+    private lateinit var settings: AppSettings
     private lateinit var tvTitle: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvPinDisplay: TextView
@@ -30,9 +34,10 @@ class LockScreenActivity : AppCompatActivity() {
     private val hexButtons = mutableListOf<Button>()
     private var enteredPin = ""
 
-    private enum class Step { SETUP_MASTER, SETUP_DURESS, LOCKED }
+    private enum class Step { SETUP_MASTER, CONFIRM_MASTER, SETUP_DURESS, CONFIRM_DURESS, LOCKED }
     private var step = Step.LOCKED
-    private var pendingMaster = ""
+    private var firstEntry = ""      // first entry of the code being confirmed
+    private var pendingMaster = ""   // confirmed master, awaiting duress setup
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +76,7 @@ class LockScreenActivity : AppCompatActivity() {
         }
 
         securityManager = SecurityManager(this)
+        settings = AppSettings(this)
         setupKeypad()
 
         step = if (securityManager.isVaultSetup()) Step.LOCKED else Step.SETUP_MASTER
@@ -92,9 +98,19 @@ class LockScreenActivity : AppCompatActivity() {
                 tvStatus.text = getString(R.string.lock_status_setup_master)
                 btnSubmit.text = getString(R.string.btn_next)
             }
+            Step.CONFIRM_MASTER -> {
+                tvTitle.text = getString(R.string.lock_title_onboarding)
+                tvStatus.text = getString(R.string.lock_status_confirm_master)
+                btnSubmit.text = getString(R.string.btn_next)
+            }
             Step.SETUP_DURESS -> {
                 tvTitle.text = getString(R.string.lock_title_onboarding)
                 tvStatus.text = getString(R.string.lock_status_setup_duress)
+                btnSubmit.text = getString(R.string.btn_next)
+            }
+            Step.CONFIRM_DURESS -> {
+                tvTitle.text = getString(R.string.lock_title_onboarding)
+                tvStatus.text = getString(R.string.lock_status_confirm_duress)
                 btnSubmit.text = getString(R.string.btn_create_vault)
             }
             Step.LOCKED -> {
@@ -104,6 +120,7 @@ class LockScreenActivity : AppCompatActivity() {
             }
         }
         clearPin()
+        randomizeKeypad() // fresh shuffle each time a step is shown
     }
 
     private fun onSubmit() {
@@ -113,7 +130,18 @@ class LockScreenActivity : AppCompatActivity() {
                     toast("Master code must be at least ${SecurityManager.MIN_LEN} hex digits.")
                     return
                 }
-                pendingMaster = enteredPin
+                firstEntry = enteredPin
+                step = Step.CONFIRM_MASTER
+                applyStep()
+            }
+            Step.CONFIRM_MASTER -> {
+                if (!enteredPin.equals(firstEntry, ignoreCase = true)) {
+                    toast("Codes did not match. Start again.")
+                    step = Step.SETUP_MASTER
+                    applyStep()
+                    return
+                }
+                pendingMaster = firstEntry
                 step = Step.SETUP_DURESS
                 applyStep()
             }
@@ -126,7 +154,18 @@ class LockScreenActivity : AppCompatActivity() {
                     toast("Duress code must be different from the master code.")
                     return
                 }
-                securityManager.setupCredentials(pendingMaster, enteredPin)
+                firstEntry = enteredPin
+                step = Step.CONFIRM_DURESS
+                applyStep()
+            }
+            Step.CONFIRM_DURESS -> {
+                if (!enteredPin.equals(firstEntry, ignoreCase = true)) {
+                    toast("Codes did not match. Re-enter the duress code.")
+                    step = Step.SETUP_DURESS
+                    applyStep()
+                    return
+                }
+                securityManager.setupCredentials(pendingMaster, firstEntry)
                 toast("Vault created.")
                 proceedToMain(isDecoy = false, wipe = false, key = pendingMaster)
             }
@@ -155,7 +194,9 @@ class LockScreenActivity : AppCompatActivity() {
             R.id.btnHex0, R.id.btnHex1, R.id.btnHex2, R.id.btnHex3,
             R.id.btnHex4, R.id.btnHex5, R.id.btnHex6, R.id.btnHex7,
             R.id.btnHex8, R.id.btnHex9, R.id.btnHex10, R.id.btnHex11,
-            R.id.btnHex12, R.id.btnHex13, R.id.btnHex14, R.id.btnHex15
+            R.id.btnHex12, R.id.btnHex13, R.id.btnHex14, R.id.btnHex15,
+            R.id.btnHex16, R.id.btnHex17, R.id.btnHex18, R.id.btnHex19,
+            R.id.btnHex20, R.id.btnHex21, R.id.btnHex22, R.id.btnHex23
         )
         ids.forEach { id ->
             val btn = findViewById<Button>(id)
@@ -164,7 +205,7 @@ class LockScreenActivity : AppCompatActivity() {
                 if (enteredPin.length < MAX_LEN) {
                     enteredPin += btn.text.toString()
                     updatePinDisplay()
-                    randomizeKeypad()
+                    if (settings.scramblePerPress) randomizeKeypad()
                 }
             }
         }
@@ -172,8 +213,8 @@ class LockScreenActivity : AppCompatActivity() {
     }
 
     private fun randomizeKeypad() {
-        val hex = "0123456789abcdef".toList().shuffled()
-        hexButtons.forEachIndexed { i, btn -> btn.text = hex[i].toString() }
+        val shuffled = SecurityManager.ALPHABET.toList().shuffled()
+        hexButtons.forEachIndexed { i, btn -> btn.text = shuffled[i].toString() }
     }
 
     private fun updatePinDisplay() {

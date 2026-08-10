@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var library: VaultLibrary
     private val vaultVolume = VaultVolume()
+    private lateinit var appSettings: com.alphasteg.pro.data.AppSettings
 
     // The current carrier pool as real files (populated when All-Files access lets
     // us scan the filesystem). Vaulting embeds into these FLAC files.
@@ -179,6 +180,9 @@ class MainActivity : AppCompatActivity() {
         tvServerUrl = findViewById(R.id.tvServerUrl)
 
         library = VaultLibrary(this)
+        appSettings = com.alphasteg.pro.data.AppSettings(this)
+
+        findViewById<TextView>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
 
         setupEdgeToEdgeInsets()
 
@@ -247,6 +251,18 @@ class MainActivity : AppCompatActivity() {
                 RaidVaultEngine.PoolMode.MANUAL_DISKS
             }
         }
+    }
+
+    private fun showSettingsDialog() {
+        val items = arrayOf<CharSequence>("Scramble keypad on every keypress (extra secure)")
+        val checked = booleanArrayOf(appSettings.scramblePerPress)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Options")
+            .setMultiChoiceItems(items, checked) { _, which, isChecked ->
+                if (which == 0) appSettings.scramblePerPress = isChecked
+            }
+            .setPositiveButton("Done", null)
+            .show()
     }
 
     private fun showPanel(panel: View, navItem: View) {

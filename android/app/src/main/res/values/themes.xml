@@ -25,7 +25,7 @@
 
     <style name="HexKey">
         <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">52dp</item>
+        <item name="android:layout_height">46dp</item>
         <item name="android:layout_columnWeight">1</item>
         <item name="android:background">@drawable/bg_keypad_button</item>
         <item name="android:stateListAnimator">@null</item>

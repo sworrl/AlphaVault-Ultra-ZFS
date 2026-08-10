@@ -67,14 +67,14 @@
             android:textColor="@color/av_cyan"
             android:textSize="22sp" />
 
-        <!-- Hex keypad: 16 keys (0-9, a-f) in a 4x4 grid, shuffled each press -->
+        <!-- Keypad: 24 keys (0-9, a-f, symbols) in a 4x6 grid, shuffled per screen -->
         <GridLayout
             android:id="@+id/keypadGrid"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:alignmentMode="alignMargins"
             android:columnCount="4"
-            android:rowCount="4"
+            android:rowCount="6"
             android:useDefaultMargins="true">
 
             <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex0" style="@style/HexKey" />
@@ -93,6 +93,14 @@
             <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex13" style="@style/HexKey" />
             <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex14" style="@style/HexKey" />
             <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex15" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex16" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex17" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex18" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex19" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex20" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex21" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex22" style="@style/HexKey" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnHex23" style="@style/HexKey" />
         </GridLayout>
 
         <LinearLayout

@@ -47,7 +47,7 @@ class SecurityManager(context: Context) {
     }
 
     fun isValidPin(pin: String): Boolean =
-        pin.length >= MIN_LEN && pin.all { it in HEX_CHARS }
+        pin.length >= MIN_LEN && pin.all { it in ALPHABET_SET }
 
     private fun hashPin(pin: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -57,8 +57,12 @@ class SecurityManager(context: Context) {
 
     companion object {
         const val MIN_LEN = 8
+
+        /** Keypad alphabet: 16 hex digits plus 8 symbols (24 keys). */
+        const val ALPHABET = "0123456789abcdef!@#\$%&*?"
+
         private const val PREF_PIN_HASH = "master_pin_hash"
         private const val PREF_DURESS_HASH = "duress_pin_hash"
-        private val HEX_CHARS = "0123456789abcdef".toSet()
+        private val ALPHABET_SET = ALPHABET.toSet()
     }
 }

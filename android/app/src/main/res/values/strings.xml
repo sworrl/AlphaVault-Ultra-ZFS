@@ -48,8 +48,10 @@
     <string name="lock_title_locked">ALPHAVAULT ULTRA // LOCKED</string>
     <string name="lock_title_onboarding">ALPHAVAULT // ONBOARDING</string>
     <string name="lock_status_pin_only">Enter your hex master code (0-9, a-f)</string>
-    <string name="lock_status_setup_master">Set a master code: at least 8 hex digits (0-9, a-f)</string>
+    <string name="lock_status_setup_master">Set a master code: at least 8 characters (0-9, a-f, symbols)</string>
+    <string name="lock_status_confirm_master">Re-enter your master code to confirm</string>
     <string name="lock_status_setup_duress">Now set a DIFFERENT duress code. Entering it later wipes the vault.</string>
+    <string name="lock_status_confirm_duress">Re-enter your duress code to confirm</string>
     <string name="btn_unlock">UNLOCK</string>
     <string name="btn_next">NEXT</string>
     <string name="btn_create_vault">CREATE VAULT</string>
