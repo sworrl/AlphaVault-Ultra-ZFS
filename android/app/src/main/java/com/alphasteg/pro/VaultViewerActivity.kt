@@ -29,6 +29,8 @@ import androidx.core.view.WindowInsetsCompat
 class VaultViewerActivity : AppCompatActivity() {
 
     private var player: MediaPlayer? = null
+    private var pdfRenderer: android.graphics.pdf.PdfRenderer? = null
+    private var pdfThread: android.os.HandlerThread? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,7 +69,8 @@ class VaultViewerActivity : AppCompatActivity() {
             Kind.TEXT -> root.addView(textView(String(bytes, Charsets.UTF_8)))
             Kind.AUDIO -> root.addView(audioView(name, bytes))
             Kind.VIDEO -> root.addView(videoView(name, bytes))
-            Kind.OTHER -> root.addView(openWithView(name, bytes))
+            Kind.PDF -> root.addView(pdfView(bytes))
+            Kind.OTHER -> root.addView(restoreOnlyView(name, bytes))
         }
         setContentView(root)
     }
@@ -98,7 +101,7 @@ class VaultViewerActivity : AppCompatActivity() {
         while (bounds.outWidth / sample > reqW || bounds.outHeight / sample > reqH) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-            ?: return openWithView("image", bytes)
+            ?: return message("Could not decode this image.")
 
         val scroll = ScrollView(this)
         val iv = ImageView(this).apply {
@@ -112,48 +115,84 @@ class VaultViewerActivity : AppCompatActivity() {
         return scroll
     }
 
+    /** Video plays from an in-memory data source onto a secure surface (no disk, no other app). */
     private fun videoView(name: String, bytes: ByteArray): View {
-        val container = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return message("In-app video needs Android 6+.\nUse Restore to export it instead.")
+        }
+        val surface = android.view.SurfaceView(this).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         }
-        val uri = VaultContentProvider.publish(name, bytes)
-        val vv = android.widget.VideoView(this).apply {
-            setVideoURI(uri)
-            setOnPreparedListener { it.isLooping = false; start() }
-            setMediaController(android.widget.MediaController(this@VaultViewerActivity).also { it.setAnchorView(this) })
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-        }
-        container.addView(vv)
-        return container
+        surface.holder.addCallback(object : android.view.SurfaceHolder.Callback {
+            override fun surfaceCreated(h: android.view.SurfaceHolder) {
+                runCatching {
+                    val mp = MediaPlayer()
+                    mp.setDataSource(ByteArrayMediaDataSource(bytes))
+                    mp.setSurface(h.surface)
+                    mp.setOnPreparedListener { it.start() }
+                    mp.prepareAsync()
+                    player = mp
+                }.onFailure {
+                    Toast.makeText(this@VaultViewerActivity, "Cannot play this video: ${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, ht: Int) {}
+            override fun surfaceDestroyed(h: android.view.SurfaceHolder) { player?.release(); player = null }
+        })
+        return surface
     }
 
-    /** For anything we don't render in-app, hand it to the system's default app. */
-    private fun openWithView(name: String, bytes: ByteArray): View {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+    /** PDF rendered page-by-page in-app via a seekable in-memory descriptor (no disk, no other app). */
+    private fun pdfView(bytes: ByteArray): View {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return message("In-app PDF needs Android 8+.\nUse Restore to export it instead.")
         }
-        container.addView(message("“$name” (${bytes.size} bytes)\nOpen it with your device's default app for this type."))
-        val btn = Button(this).apply { text = "OPEN WITH…" }
-        btn.setOnClickListener { openExternally(name, bytes) }
-        container.addView(btn)
-        return container
+        return try {
+            val sm = getSystemService(android.os.storage.StorageManager::class.java)
+            pdfThread = android.os.HandlerThread("vault-pdf").apply { start() }
+            val handler = android.os.Handler(pdfThread!!.looper)
+            val pfd = sm.openProxyFileDescriptor(
+                android.os.ParcelFileDescriptor.MODE_READ_ONLY,
+                object : android.os.ProxyFileDescriptorCallback() {
+                    override fun onGetSize(): Long = bytes.size.toLong()
+                    override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
+                        if (offset >= bytes.size) return 0
+                        val n = minOf(size.toLong(), bytes.size - offset).toInt()
+                        System.arraycopy(bytes, offset.toInt(), data, 0, n)
+                        return n
+                    }
+                    override fun onRelease() {}
+                },
+                handler
+            )
+            val renderer = android.graphics.pdf.PdfRenderer(pfd)
+            pdfRenderer = renderer
+            val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val width = resources.displayMetrics.widthPixels
+            for (i in 0 until renderer.pageCount) {
+                renderer.openPage(i).use { page ->
+                    val h = (width.toFloat() / page.width * page.height).toInt().coerceAtLeast(1)
+                    val bmp = android.graphics.Bitmap.createBitmap(width, h, android.graphics.Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(Color.WHITE)
+                    page.render(bmp, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    column.addView(ImageView(this).apply {
+                        setImageBitmap(bmp)
+                        adjustViewBounds = true
+                        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(8) }
+                    })
+                }
+            }
+            ScrollView(this).apply {
+                addView(column)
+                layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+            }
+        } catch (e: Exception) {
+            message("Could not render this PDF (${e.message}).\nUse Restore to export it instead.")
+        }
     }
 
-    private fun openExternally(name: String, bytes: ByteArray) {
-        val uri = VaultContentProvider.publish(name, bytes)
-        val ext = name.substringAfterLast('.', "").lowercase()
-        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
-            ?: "application/octet-stream"
-        val view = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mime)
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { startActivity(android.content.Intent.createChooser(view, "Open with")) }
-            .onFailure { Toast.makeText(this, "No app can open this type.", Toast.LENGTH_LONG).show() }
-    }
+    private fun restoreOnlyView(name: String, bytes: ByteArray): View =
+        message("“$name” (${bytes.size} bytes)\nThis type has no secure in-app viewer.\nUse Restore from the vault to export it.")
 
     private fun textView(text: String): View {
         val scroll = ScrollView(this)
@@ -216,15 +255,20 @@ class VaultViewerActivity : AppCompatActivity() {
         super.onDestroy()
         player?.release()
         player = null
+        runCatching { pdfRenderer?.close() }
+        pdfRenderer = null
+        pdfThread?.quitSafely()
+        pdfThread = null
     }
 
-    private enum class Kind { IMAGE, TEXT, AUDIO, VIDEO, OTHER }
+    private enum class Kind { IMAGE, TEXT, AUDIO, VIDEO, PDF, OTHER }
 
     private fun kindOf(name: String, bytes: ByteArray): Kind {
         val ext = name.substringAfterLast('.', "").lowercase()
         return when (ext) {
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic" -> Kind.IMAGE
             "mp4", "mkv", "webm", "3gp", "mov", "avi", "m4v" -> Kind.VIDEO
+            "pdf" -> Kind.PDF
             "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus" -> Kind.AUDIO
             "txt", "md", "markdown", "json", "csv", "log", "xml", "html", "htm",
             "kt", "java", "py", "js", "ts", "css", "yaml", "yml", "ini", "cfg", "conf", "sh" -> Kind.TEXT
