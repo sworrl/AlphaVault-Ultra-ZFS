@@ -126,6 +126,29 @@ class VaultVolumeTest {
     }
 
     @Test
+    fun differentPasscodesHoldDifferentCompartments() {
+        val pool = buildPool()
+        val vol = VaultVolume()
+        val pinA = "aa11bb22"
+        val pinB = "cc33dd44"
+
+        vol.vault("alice.txt", "alice only".toByteArray(), pinA, pool, 1L)
+        vol.vault("bob.txt", "bob only".toByteArray(), pinB, pool, 2L)
+
+        // Each passcode sees only its own compartment.
+        val listedA = vol.list(pool, pinA)
+        val listedB = vol.list(pool, pinB)
+        assertEquals(1, listedA.size)
+        assertEquals("alice.txt", listedA[0].name)
+        assertEquals(1, listedB.size)
+        assertEquals("bob.txt", listedB[0].name)
+
+        // And each restores only its own file, unaffected by the other compartment.
+        assertArrayEquals("alice only".toByteArray(), vol.restore(listedA[0].fileId, pinA, pool).second)
+        assertArrayEquals("bob only".toByteArray(), vol.restore(listedB[0].fileId, pinB, pool).second)
+    }
+
+    @Test
     fun wrongPasswordHidesTheIndex() {
         val pool = buildPool()
         val vol = VaultVolume()

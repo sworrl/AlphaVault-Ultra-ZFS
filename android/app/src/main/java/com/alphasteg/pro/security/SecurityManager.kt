@@ -1,83 +1,64 @@
 package com.alphasteg.pro.security
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import java.security.KeyStore
 import java.security.MessageDigest
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
 
-class SecurityManager(private val context: Context) {
+/**
+ * Master and duress credentials for the vault.
+ *
+ * Codes are hexadecimal (0-9, a-f), at least 8 digits. Two distinct codes are
+ * set at onboarding: the master code unlocks the vault; the duress code triggers
+ * a wipe. Codes are stored only as salted SHA-256 hashes.
+ *
+ * Biometric unlock was removed: Android's BiometricPrompt cannot tell the app
+ * which finger authenticated, so a specific finger cannot be bound to duress.
+ */
+class SecurityManager(context: Context) {
 
     private val prefs = context.getSharedPreferences("alphasteg_vault_sec", Context.MODE_PRIVATE)
 
-    companion object {
-        private const val KEY_ALIAS = "AlphaStegMasterKey"
-        private const val PREF_PIN_HASH = "master_pin_hash"
-        private const val PREF_DECOY_PIN_HASH = "decoy_pin_hash"
-        private const val PREF_AUTH_TYPE = "auth_type" // PIN, PASSWORD, PATTERN
-    }
+    enum class AuthResult { SUCCESS_MASTER, SUCCESS_DURESS, INVALID }
 
-    init {
-        ensureHardwareKeyExists()
-    }
+    fun isVaultSetup(): Boolean = prefs.contains(PREF_PIN_HASH)
 
-    private fun ensureHardwareKeyExists() {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (!keyStore.containsAlias(KEY_ALIAS)) {
-            val keyGenerator = KeyGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore"
-            )
-            keyGenerator.init(
-                KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-                )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(256)
-                    .build()
-            )
-            keyGenerator.generateKey()
-        }
-    }
-
-    fun isVaultSetup(): Boolean {
-        return prefs.contains(PREF_PIN_HASH)
-    }
-
-    fun setupMasterPin(pin: String, decoyPin: String? = null) {
-        val hash = hashPin(pin)
-        prefs.edit().putString(PREF_PIN_HASH, hash).apply()
-        
-        if (!decoyPin.isNullOrBlank()) {
-            val decoyHash = hashPin(decoyPin)
-            prefs.edit().putString(PREF_DECOY_PIN_HASH, decoyHash).apply()
-        }
+    /** Set the master and duress codes. Both must be valid hex, >= 8, and differ. */
+    fun setupCredentials(masterPin: String, duressPin: String) {
+        require(isValidPin(masterPin)) { "Master code must be at least $MIN_LEN hex digits." }
+        require(isValidPin(duressPin)) { "Duress code must be at least $MIN_LEN hex digits." }
+        require(!masterPin.equals(duressPin, ignoreCase = true)) { "Duress code must differ from the master code." }
+        prefs.edit()
+            .putString(PREF_PIN_HASH, hashPin(masterPin))
+            .putString(PREF_DURESS_HASH, hashPin(duressPin))
+            .apply()
     }
 
     fun verifyPin(inputPin: String): AuthResult {
         val inputHash = hashPin(inputPin)
-        val storedHash = prefs.getString(PREF_PIN_HASH, "")
-        val storedDecoyHash = prefs.getString(PREF_DECOY_PIN_HASH, "")
-
-        return when {
-            inputHash == storedHash -> AuthResult.SUCCESS_MASTER
-            inputHash == storedDecoyHash -> AuthResult.SUCCESS_DECOY
+        return when (inputHash) {
+            prefs.getString(PREF_PIN_HASH, null) -> AuthResult.SUCCESS_MASTER
+            prefs.getString(PREF_DURESS_HASH, null) -> AuthResult.SUCCESS_DURESS
             else -> AuthResult.INVALID
         }
     }
 
+    /** Erase stored credentials, forcing re-onboarding. Part of the duress path. */
+    fun wipeCredentials() {
+        prefs.edit().remove(PREF_PIN_HASH).remove(PREF_DURESS_HASH).apply()
+    }
+
+    fun isValidPin(pin: String): Boolean =
+        pin.length >= MIN_LEN && pin.all { it in HEX_CHARS }
+
     private fun hashPin(pin: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        val bytes = digest.digest("AlphaVault_Salt_2026_$pin".toByteArray(Charsets.UTF_8))
+        val bytes = digest.digest("AlphaVault_Salt_2026_${pin.lowercase()}".toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    enum class AuthResult {
-        SUCCESS_MASTER,
-        SUCCESS_DECOY,
-        INVALID
+    companion object {
+        const val MIN_LEN = 8
+        private const val PREF_PIN_HASH = "master_pin_hash"
+        private const val PREF_DURESS_HASH = "duress_pin_hash"
+        private val HEX_CHARS = "0123456789abcdef".toSet()
     }
 }

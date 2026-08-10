@@ -8,43 +8,46 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.alphasteg.pro.security.SecurityManager
-import java.util.concurrent.Executor
 
+/**
+ * Hex-code lock screen. No biometric (Android can't bind a specific finger to
+ * duress). Onboarding is mandatory two-step: a master code and a distinct duress
+ * code, each at least 8 hex digits. Entering the duress code later wipes the vault.
+ */
 class LockScreenActivity : AppCompatActivity() {
 
     private lateinit var securityManager: SecurityManager
     private lateinit var tvTitle: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvPinDisplay: TextView
-    private lateinit var btnPrimaryBio: Button
     private lateinit var btnSubmit: Button
-    private lateinit var btnKeyBio: Button
     private lateinit var btnKeyClear: Button
 
-    private val pinButtons = mutableListOf<Button>()
+    private val hexButtons = mutableListOf<Button>()
     private var enteredPin = ""
 
-    private lateinit var executor: Executor
-    private lateinit var biometricPrompt: BiometricPrompt
-    private lateinit var promptInfo: BiometricPrompt.PromptInfo
+    private enum class Step { SETUP_MASTER, SETUP_DURESS, LOCKED }
+    private var step = Step.LOCKED
+    private var pendingMaster = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Ensure app NEVER pops over the Android system lock screen
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(false)
             setInheritShowWhenLocked(false)
         }
 
-        // Full Screen Edge-to-Edge Integration: bar colors come from the theme
+        // Hardening: block screenshots, screen recording, and recents thumbnails.
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
+
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
@@ -55,9 +58,7 @@ class LockScreenActivity : AppCompatActivity() {
         tvTitle = findViewById(R.id.tvTitle)
         tvStatus = findViewById(R.id.tvStatus)
         tvPinDisplay = findViewById(R.id.tvPinDisplay)
-        btnPrimaryBio = findViewById(R.id.btnPrimaryBio)
         btnSubmit = findViewById(R.id.btnSubmit)
-        btnKeyBio = findViewById(R.id.btnKeyBio)
         btnKeyClear = findViewById(R.id.btnKeyClear)
 
         val rootLayout: View = findViewById(R.id.lockRoot)
@@ -70,87 +71,97 @@ class LockScreenActivity : AppCompatActivity() {
         }
 
         securityManager = SecurityManager(this)
-
         setupKeypad()
-        setupBiometrics()
 
-        val biometricManager = BiometricManager.from(this)
-        val canAuth = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
-        val bioAvailable = (canAuth == BiometricManager.BIOMETRIC_SUCCESS)
+        step = if (securityManager.isVaultSetup()) Step.LOCKED else Step.SETUP_MASTER
+        applyStep()
 
-        if (!bioAvailable) {
-            btnPrimaryBio.visibility = View.GONE
-        }
-
-        if (!securityManager.isVaultSetup()) {
-            tvTitle.text = getString(R.string.lock_title_onboarding)
-            tvStatus.text = getString(R.string.lock_status_setup)
-            btnSubmit.text = getString(R.string.btn_create_vault)
-        } else {
-            tvTitle.text = getString(R.string.lock_title_locked)
-            tvStatus.text = getString(if (bioAvailable) R.string.lock_status_bio else R.string.lock_status_pin_only)
-            btnSubmit.text = getString(R.string.btn_pin_fallback)
-
-            if (bioAvailable) {
-                tvTitle.postDelayed({
-                    triggerBiometricPrompt()
-                }, 300)
+        btnSubmit.setOnClickListener { onSubmit() }
+        btnKeyClear.setOnClickListener {
+            if (enteredPin.isNotEmpty()) {
+                enteredPin = enteredPin.dropLast(1)
+                updatePinDisplay()
             }
         }
+    }
 
-        btnPrimaryBio.setOnClickListener {
-            triggerBiometricPrompt()
-        }
-
-        btnSubmit.setOnClickListener {
-            if (enteredPin.isEmpty()) {
-                Toast.makeText(this, "Please enter your PIN", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+    private fun applyStep() {
+        when (step) {
+            Step.SETUP_MASTER -> {
+                tvTitle.text = getString(R.string.lock_title_onboarding)
+                tvStatus.text = getString(R.string.lock_status_setup_master)
+                btnSubmit.text = getString(R.string.btn_next)
             }
+            Step.SETUP_DURESS -> {
+                tvTitle.text = getString(R.string.lock_title_onboarding)
+                tvStatus.text = getString(R.string.lock_status_setup_duress)
+                btnSubmit.text = getString(R.string.btn_create_vault)
+            }
+            Step.LOCKED -> {
+                tvTitle.text = getString(R.string.lock_title_locked)
+                tvStatus.text = getString(R.string.lock_status_pin_only)
+                btnSubmit.text = getString(R.string.btn_unlock)
+            }
+        }
+        clearPin()
+    }
 
-            if (!securityManager.isVaultSetup()) {
-                securityManager.setupMasterPin(enteredPin, decoyPin = "${enteredPin}99")
-                Toast.makeText(this, "Master Vault Setup Successfully!", Toast.LENGTH_SHORT).show()
-                proceedToMain(isDecoy = false)
-            } else {
+    private fun onSubmit() {
+        when (step) {
+            Step.SETUP_MASTER -> {
+                if (!securityManager.isValidPin(enteredPin)) {
+                    toast("Master code must be at least ${SecurityManager.MIN_LEN} hex digits.")
+                    return
+                }
+                pendingMaster = enteredPin
+                step = Step.SETUP_DURESS
+                applyStep()
+            }
+            Step.SETUP_DURESS -> {
+                if (!securityManager.isValidPin(enteredPin)) {
+                    toast("Duress code must be at least ${SecurityManager.MIN_LEN} hex digits.")
+                    return
+                }
+                if (enteredPin.equals(pendingMaster, ignoreCase = true)) {
+                    toast("Duress code must be different from the master code.")
+                    return
+                }
+                securityManager.setupCredentials(pendingMaster, enteredPin)
+                toast("Vault created.")
+                proceedToMain(isDecoy = false, wipe = false, key = pendingMaster)
+            }
+            Step.LOCKED -> {
+                if (enteredPin.isEmpty()) { toast("Enter your code"); return }
                 when (securityManager.verifyPin(enteredPin)) {
-                    SecurityManager.AuthResult.SUCCESS_MASTER -> proceedToMain(isDecoy = false)
-                    SecurityManager.AuthResult.SUCCESS_DECOY -> {
-                        Toast.makeText(this, "Decoy Vault Mode Activated", Toast.LENGTH_SHORT).show()
-                        proceedToMain(isDecoy = true)
+                    SecurityManager.AuthResult.SUCCESS_MASTER ->
+                        proceedToMain(isDecoy = false, wipe = false, key = enteredPin)
+                    SecurityManager.AuthResult.SUCCESS_DURESS -> {
+                        // Duress: destroy credentials, launch a wiping, empty-looking vault.
+                        securityManager.wipeCredentials()
+                        proceedToMain(isDecoy = true, wipe = true, key = enteredPin)
                     }
                     SecurityManager.AuthResult.INVALID -> {
-                        Toast.makeText(this, "Invalid PIN!", Toast.LENGTH_SHORT).show()
+                        toast("Invalid code")
                         clearPin()
                         randomizeKeypad()
                     }
                 }
             }
         }
-
-        btnKeyClear.setOnClickListener {
-            if (enteredPin.isNotEmpty()) {
-                enteredPin = enteredPin.substring(0, enteredPin.length - 1)
-                updatePinDisplay()
-            }
-        }
-
-        btnKeyBio.setOnClickListener {
-            triggerBiometricPrompt()
-        }
     }
 
     private fun setupKeypad() {
-        val buttonIds = listOf(
-            R.id.btnKey0, R.id.btnKey1, R.id.btnKey2, R.id.btnKey3, R.id.btnKey4,
-            R.id.btnKey5, R.id.btnKey6, R.id.btnKey7, R.id.btnKey8, R.id.btnKey9
+        val ids = listOf(
+            R.id.btnHex0, R.id.btnHex1, R.id.btnHex2, R.id.btnHex3,
+            R.id.btnHex4, R.id.btnHex5, R.id.btnHex6, R.id.btnHex7,
+            R.id.btnHex8, R.id.btnHex9, R.id.btnHex10, R.id.btnHex11,
+            R.id.btnHex12, R.id.btnHex13, R.id.btnHex14, R.id.btnHex15
         )
-
-        buttonIds.forEach { id ->
-            val btn: Button = findViewById(id)
-            pinButtons.add(btn)
+        ids.forEach { id ->
+            val btn = findViewById<Button>(id)
+            hexButtons.add(btn)
             btn.setOnClickListener {
-                if (enteredPin.length < 8) {
+                if (enteredPin.length < MAX_LEN) {
                     enteredPin += btn.text.toString()
                     updatePinDisplay()
                     randomizeKeypad()
@@ -161,10 +172,8 @@ class LockScreenActivity : AppCompatActivity() {
     }
 
     private fun randomizeKeypad() {
-        val digits = (0..9).shuffled()
-        pinButtons.forEachIndexed { index, button ->
-            button.text = digits[index].toString()
-        }
+        val hex = "0123456789abcdef".toList().shuffled()
+        hexButtons.forEachIndexed { i, btn -> btn.text = hex[i].toString() }
     }
 
     private fun updatePinDisplay() {
@@ -176,52 +185,19 @@ class LockScreenActivity : AppCompatActivity() {
         updatePinDisplay()
     }
 
-    private fun setupBiometrics() {
-        executor = ContextCompat.getMainExecutor(this)
-        biometricPrompt = BiometricPrompt(this, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    Toast.makeText(applicationContext, "Biometric Unlock Succeeded!", Toast.LENGTH_SHORT).show()
-                    proceedToMain(isDecoy = false)
-                }
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                }
-            })
-
-        promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("AlphaVault Biometric Unlock")
-            .setSubtitle("Use your Pixel 10 Fingerprint or Face to unlock your FLAC Vault")
-            .setNegativeButtonText("Use PIN Fallback")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
-            .build()
-    }
-
-    private fun triggerBiometricPrompt() {
-        val biometricManager = BiometricManager.from(this)
-        val canAuth = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
-        if (canAuth == BiometricManager.BIOMETRIC_SUCCESS) {
-            try {
-                biometricPrompt.authenticate(promptInfo)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Biometric Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            Toast.makeText(this, "Biometrics setup required in Android Settings", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun proceedToMain(isDecoy: Boolean) {
+    private fun proceedToMain(isDecoy: Boolean, wipe: Boolean, key: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra("EXTRA_DECOY_MODE", isDecoy)
+            putExtra("EXTRA_WIPE", wipe)
+            putExtra("EXTRA_VAULT_KEY", key)
         }
         startActivity(intent)
         finish()
+    }
+
+    companion object {
+        private const val MAX_LEN = 32
     }
 }

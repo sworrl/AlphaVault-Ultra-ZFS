@@ -59,9 +59,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rbManualDisks: RadioButton
 
     private lateinit var panelVault: View
+    private lateinit var panelDisks: View
     private lateinit var panelStego: View
     private lateinit var panelServer: View
     private lateinit var navVault: View
+    private lateinit var navDisks: View
     private lateinit var navStego: View
     private lateinit var navServer: View
 
@@ -73,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvServerUrl: TextView
 
     private var isDecoyMode = false
+    private var pendingWipe = false
     private var selectedCarrierUri: Uri? = null
     private var poolMode = RaidVaultEngine.PoolMode.AUTO_WHOLE_LIBRARY
 
@@ -126,6 +129,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Hardening: block screenshots, screen recording, and recents thumbnails.
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
+
         // 100% Edge-to-Edge Canvas: bar colors come from the theme
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -135,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         isDecoyMode = intent.getBooleanExtra("EXTRA_DECOY_MODE", false)
+        pendingWipe = intent.getBooleanExtra("EXTRA_WIPE", false)
 
         topBar = findViewById(R.id.topBar)
         tvModeBadge = findViewById(R.id.tvModeBadge)
@@ -153,9 +163,11 @@ class MainActivity : AppCompatActivity() {
         rbManualDisks = findViewById(R.id.rbManualDisks)
 
         panelVault = findViewById(R.id.panelVault)
+        panelDisks = findViewById(R.id.panelDisks)
         panelStego = findViewById(R.id.panelStego)
         panelServer = findViewById(R.id.panelServer)
         navVault = findViewById(R.id.navVault)
+        navDisks = findViewById(R.id.navDisks)
         navStego = findViewById(R.id.navStego)
         navServer = findViewById(R.id.navServer)
 
@@ -223,6 +235,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupNavigation() {
         navVault.setOnClickListener { showPanel(panelVault, navVault) }
+        navDisks.setOnClickListener { showPanel(panelDisks, navDisks) }
         navStego.setOnClickListener { showPanel(panelStego, navStego) }
         navServer.setOnClickListener { showPanel(panelServer, navServer) }
         showPanel(panelVault, navVault)
@@ -237,10 +250,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPanel(panel: View, navItem: View) {
-        listOf(panelVault, panelStego, panelServer).forEach {
+        listOf(panelVault, panelDisks, panelStego, panelServer).forEach {
             it.visibility = if (it === panel) View.VISIBLE else View.GONE
         }
-        listOf(navVault, navStego, navServer).forEach {
+        listOf(navVault, navDisks, navStego, navServer).forEach {
             it.isSelected = it === navItem
         }
     }
@@ -321,6 +334,11 @@ class MainActivity : AppCompatActivity() {
                 trackCount = result.tracks.size
                 poolBytes = result.totalBytes
                 currentPool = pool
+                if (pendingWipe) {
+                    pendingWipe = false
+                    val wipePool = pool
+                    Thread { runCatching { vaultVolume.wipeAll(wipePool) } }.start()
+                }
                 renderPoolDisks(result.tracks)
                 updateStorageBar(result.totalBytes, result.tracks.size)
                 refreshVaultUi()

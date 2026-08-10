@@ -18,7 +18,8 @@
     <string name="pool_disks_header">STORAGE POOL DISKS (FLAC CARRIERS)</string>
     <string name="disks_empty">No FLAC carriers found.\nTransfer FLAC tracks into your Music folder, then tap SYNC LIBRARY.</string>
     <string name="storage_scanning">Scanning storage…</string>
-    <string name="vault_files_header">VAULTED SENSITIVE FILES</string>
+    <string name="vault_files_header">VAULT FILES</string>
+    <string name="vault_files_sub">Files hidden inside your FLAC volume. Tap one to view, restore, or delete.</string>
     <string name="vault_empty">No vaulted files found.\nTap \'+ ENCRYPT &amp; VAULT\' to store sensitive files safely.</string>
     <string name="vault_stats_decoy">0 Vault Files • Decoy Mode Active</string>
     <string name="vault_stats_active">Whole Library Pool Active • 768-bit Multi-Cipher Cascade (AES-256-GCM + ChaCha20 + HMAC-SHA512)</string>
@@ -38,19 +39,19 @@
     <string name="server_status_running">Maxed Out Cascade Encryption Active (768-bit)\nAES-256-GCM + ChaCha20 + HMAC-SHA512</string>
 
     <!-- Bottom navigation -->
-    <string name="nav_vault">Vault Files</string>
+    <string name="nav_vault">Vault</string>
+    <string name="nav_disks">Disks</string>
     <string name="nav_stego">Spectrum</string>
     <string name="nav_server">Wi-Fi Sync</string>
 
     <!-- Lock screen -->
     <string name="lock_title_locked">ALPHAVAULT ULTRA // LOCKED</string>
     <string name="lock_title_onboarding">ALPHAVAULT // ONBOARDING</string>
-    <string name="lock_status_bio">Primary Biometric Unlock Active • PIN Fallback Available</string>
-    <string name="lock_status_pin_only">Tap PIN digits to unlock</string>
-    <string name="lock_status_setup">Setup a master PIN for your FLAC Vault</string>
-    <string name="btn_bio_unlock">UNLOCK WITH FINGERPRINT / FACE</string>
-    <string name="btn_pin_fallback">UNLOCK WITH PIN (FALLBACK)</string>
-    <string name="btn_create_vault">CREATE MASTER VAULT</string>
-    <string name="key_bio">BIO</string>
+    <string name="lock_status_pin_only">Enter your hex master code (0-9, a-f)</string>
+    <string name="lock_status_setup_master">Set a master code: at least 8 hex digits (0-9, a-f)</string>
+    <string name="lock_status_setup_duress">Now set a DIFFERENT duress code. Entering it later wipes the vault.</string>
+    <string name="btn_unlock">UNLOCK</string>
+    <string name="btn_next">NEXT</string>
+    <string name="btn_create_vault">CREATE VAULT</string>
     <string name="key_backspace">⌫</string>
 </resources>

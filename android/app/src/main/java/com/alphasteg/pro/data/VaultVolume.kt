@@ -70,11 +70,17 @@ class VaultVolume {
         val enc = CryptoEngine.encryptPayload(json.toByteArray(Charsets.UTF_8), password)
         val payload = VaultCodec.encodeIndex(index.generation, enc)
 
-        // Drop stale index replicas everywhere, then write fresh ones across albums.
+        // Drop only THIS passcode's stale index replicas (the ones that decrypt
+        // with this password), then write fresh ones. Other passcodes' compartments
+        // are left untouched, so one FLAC volume can hold several deniable vaults.
         for (f in pool) {
             val bytes = readOrNull(f) ?: continue
             if (!FlacCarrierEngine.isFlac(bytes)) continue
-            val cleaned = FlacCarrierEngine.removeMatching(bytes) { VaultCodec.isIndexPayload(it) }
+            val cleaned = FlacCarrierEngine.removeMatching(bytes) { payload ->
+                val blob = VaultCodec.decodeIndex(payload)
+                blob != null && blob.crcOk &&
+                    runCatching { CryptoEngine.decryptPayload(blob.encBody, password) }.isSuccess
+            }
             if (!cleaned.contentEquals(bytes)) writeAtomic(f, cleaned)
         }
         for (carrier in spreadCarriers(REPLICAS, pool)) {

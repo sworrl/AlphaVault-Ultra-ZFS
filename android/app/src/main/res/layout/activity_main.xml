@@ -58,7 +58,7 @@
         android:layout_above="@id/floatingDockContainer"
         android:layout_below="@id/topBar">
 
-        <!-- Vault Panel (Default View) -->
+        <!-- VAULT PANEL: only the hidden files in the FLAC volume (main view) -->
         <ScrollView
             android:id="@+id/panelVault"
             android:layout_width="match_parent"
@@ -73,24 +73,69 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <!-- Header Cyber Vault Banner -->
-                <com.google.android.material.card.MaterialCardView
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:text="@string/vault_files_header"
+                    android:textColor="@color/av_text_primary"
+                    android:textSize="17sp"
+                    android:textStyle="bold" />
+
+                <TextView
                     android:layout_width="match_parent"
-                    android:layout_height="140dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="14dp"
+                    android:text="@string/vault_files_sub"
+                    android:textColor="@color/av_text_secondary"
+                    android:textSize="12sp" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnAddVaultFile"
+                    android:layout_width="match_parent"
+                    android:layout_height="54dp"
                     android:layout_marginBottom="16dp"
-                    app:cardBackgroundColor="@color/av_surface"
-                    app:cardCornerRadius="16dp"
-                    app:strokeColor="@color/av_cyan"
-                    app:strokeWidth="1dp">
+                    android:background="@drawable/bg_neon_button"
+                    android:stateListAnimator="@null"
+                    android:text="@string/btn_encrypt_vault"
+                    android:textColor="@color/av_bg"
+                    android:textStyle="bold" />
 
-                    <ImageView
+                <LinearLayout
+                    android:id="@+id/vaultFileList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvEmptyVault"
                         android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:contentDescription="@string/vault_banner_desc"
-                        android:scaleType="centerCrop"
-                        android:src="@drawable/cyber_vault_banner" />
+                        android:layout_height="140dp"
+                        android:background="@drawable/bg_cyber_card"
+                        android:gravity="center"
+                        android:text="@string/vault_empty"
+                        android:textColor="@color/av_text_disabled"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- DISKS PANEL: RAID manager - storage, pool, and the FLAC carriers -->
+        <ScrollView
+            android:id="@+id/panelDisks"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
 
                 <!-- RAID-Z2 & Hot Spare Pool Glass Card -->
                 <LinearLayout
@@ -118,7 +163,6 @@
                         android:textColor="@color/av_cyan"
                         android:textSize="12sp" />
 
-                    <!-- Graphical storage capacity bar: used (device) + pool overlay -->
                     <LinearLayout
                         android:id="@+id/storageBar"
                         android:layout_width="match_parent"
@@ -151,7 +195,6 @@
                         android:textColor="@color/av_text_secondary"
                         android:textSize="12sp" />
 
-                    <!-- Pool Mode Radio Selector -->
                     <RadioGroup
                         android:id="@+id/rgPoolMode"
                         android:layout_width="match_parent"
@@ -179,39 +222,17 @@
 
                 </LinearLayout>
 
-                <!-- Vault Actions -->
-                <LinearLayout
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnScanVault"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="52dp"
                     android:layout_marginBottom="16dp"
-                    android:orientation="horizontal">
+                    android:background="@drawable/bg_keypad_button"
+                    android:stateListAnimator="@null"
+                    android:text="@string/btn_auto_discover"
+                    android:textColor="@color/av_cyan"
+                    android:textStyle="bold" />
 
-                    <androidx.appcompat.widget.AppCompatButton
-                        android:id="@+id/btnAddVaultFile"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_marginEnd="8dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/bg_neon_button"
-                        android:stateListAnimator="@null"
-                        android:text="@string/btn_encrypt_vault"
-                        android:textColor="@color/av_bg"
-                        android:textStyle="bold" />
-
-                    <androidx.appcompat.widget.AppCompatButton
-                        android:id="@+id/btnScanVault"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_marginStart="8dp"
-                        android:layout_weight="1"
-                        android:background="@drawable/bg_keypad_button"
-                        android:stateListAnimator="@null"
-                        android:text="@string/btn_auto_discover"
-                        android:textColor="@color/av_cyan"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <!-- Storage Pool Disks (the FLAC carriers) -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -225,7 +246,7 @@
                     android:id="@+id/poolDiskList"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="20dp"
+                    android:layout_marginBottom="12dp"
                     android:orientation="vertical">
 
                     <TextView
@@ -235,33 +256,6 @@
                         android:background="@drawable/bg_cyber_card"
                         android:gravity="center"
                         android:text="@string/disks_empty"
-                        android:textColor="@color/av_text_disabled"
-                        android:textSize="13sp" />
-                </LinearLayout>
-
-                <!-- Vaulted Sensitive Files (encrypted payloads distributed into the pool) -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:text="@string/vault_files_header"
-                    android:textColor="@color/av_cyan"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-
-                <LinearLayout
-                    android:id="@+id/vaultFileList"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:id="@+id/tvEmptyVault"
-                        android:layout_width="match_parent"
-                        android:layout_height="100dp"
-                        android:background="@drawable/bg_cyber_card"
-                        android:gravity="center"
-                        android:text="@string/vault_empty"
                         android:textColor="@color/av_text_disabled"
                         android:textSize="13sp" />
                 </LinearLayout>
@@ -438,6 +432,34 @@
                     android:layout_marginTop="3dp"
                     android:duplicateParentState="true"
                     android:text="@string/nav_vault"
+                    android:textColor="@color/nav_item_color"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/navDisks"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_dock_item"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:contentDescription="@string/nav_disks"
+                    android:duplicateParentState="true"
+                    android:src="@drawable/ic_nav_disks"
+                    app:tint="@color/nav_item_color" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:duplicateParentState="true"
+                    android:text="@string/nav_disks"
                     android:textColor="@color/nav_item_color"
                     android:textSize="11sp"
                     android:textStyle="bold" />

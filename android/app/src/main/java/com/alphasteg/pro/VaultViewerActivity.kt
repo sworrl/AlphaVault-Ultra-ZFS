@@ -32,6 +32,11 @@ class VaultViewerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Hardening: block screenshots, screen recording, and recents thumbnails.
+        window.setFlags(
+            android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE
+        )
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         val name = intent.getStringExtra(EXTRA_NAME) ?: "Vaulted file"
