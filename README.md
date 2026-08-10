@@ -52,20 +52,22 @@ This repository is a fork of [bennjordan/AlphaSteg](https://github.com/bennjorda
 
 Verified on a Pixel-class device running Android 14, and by unit tests where noted. Everything else in this README describes code that exists in the repo but has not been run end to end.
 
-**Tested and working**
+**Tested and working** (13 unit tests pass; the carrier engine is also verified against a real device FLAC)
 
-- The app builds, installs, and launches through the lock screen into the main UI.
-- The UI renders: floating navigation dock, the three panels, and a full-bleed adaptive launcher icon.
-- FLAC library sync. On startup and on a manual **Sync Library** tap, the app scans the standard media folders for `.flac` files and lists them as pool disks. Verified with 24 tracks across two albums.
-- The storage bar. Used and free device space plus total FLAC pool size, read from `StatFs`.
-- The vault round trip: plaintext to 768-bit cascade encryption to RAID-Z2 chunking to reconstruction to decryption. Proven by `VaultRoundTripTest` (5 passing tests), which also confirms single-chunk parity recovery and that a wrong password is rejected by the HMAC before decryption.
-- **Encrypt & Vault** persists. Picking a file encrypts it, splits it into RAID chunks, and writes those chunks plus a manifest to app-private storage; the file then appears under **Vaulted Files**. Tapping a vaulted file reconstructs, decrypts, and writes the original back to Downloads.
+- Build, install, and launch through the lock screen into the main UI, with a full-bleed adaptive launcher icon.
+- Navigation split the way the app is meant to be used: a **Vault** tab showing only the hidden files, and a separate **Disks** tab (a RAID-manager view: storage bar, pool stats, sync, and the FLAC carriers).
+- FLAC library sync. On startup, on resume, and on a manual **Sync Library** tap, the app scans the standard media folders for `.flac` files. Verified with 24 tracks across two albums.
+- Three-tier storage view: whole-device usage, the music pool that forms the vault, and granular vault usage.
+- The vault as a filesystem inside the FLAC library. A file is cascade-encrypted, split into RAID-Z2 chunks, and each chunk is embedded in a real FLAC as an APPLICATION metadata block, spread across albums so a chunk and its mirror never share one album. The audio frames are left byte-identical, so tracks still play. An encrypted, CRC-checksummed index (replicated like a GPT/uberblock) lives in the carriers too; there is no app-private database. Restore self-heals: a corrupt or missing chunk is rebuilt from parity or its mirror.
+- What the tests prove: round-trip vault and restore; audio bytes unchanged after embedding; a whole album deleted from the library and the file still restores; a corrupted chunk detected by CRC and rebuilt; the index generation counter; a wrong password reading as an empty vault.
+- Multiple passcodes, multiple compartments. Different codes open different vaults in the same FLAC volume; saving one compartment's index leaves the others untouched.
+- Secure in-app viewer: decrypt into memory and view images, text, and audio (played from RAM) without writing plaintext to disk.
+- Lock screen: hex codes (0-9, a-f), minimum 8, with a mandatory master and duress code set at onboarding. The duress code wipes stored credentials and strips every vault block from the carriers.
+- Hardening: `FLAG_SECURE` on all screens (no screenshots, screen recording, or recents thumbnails), backups disabled, cleartext traffic disabled.
 
 **Written but not yet verified end to end**
 
-- LSB embed and extract into real FLAC carriers (`LsbStegoEngine`). Vaulted chunks currently live in the app's private vault store, not yet hidden inside the audio of the FLAC pool.
-- Biometric unlock and the decoy PIN (`LockScreenActivity`, `SecurityManager`).
-- The Android **Wi-Fi Sync** switch. It starts a foreground service with a notification; there is no HTTP server behind it yet.
+- The Android **Wi-Fi Sync** switch starts a foreground service with a notification; there is no HTTP server behind it yet.
 - The spectrum visualizer draws, but it is decorative and not tied to real audio.
 
 See [Roadmap](#roadmap) for features that are planned but not started.
