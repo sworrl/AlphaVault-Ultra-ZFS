@@ -27,6 +27,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.alphasteg.pro.data.FlacTrack
 import com.alphasteg.pro.data.VaultLibrary
+import com.alphasteg.pro.data.VaultStore
 import com.alphasteg.pro.engine.CryptoEngine
 import com.alphasteg.pro.engine.RaidVaultEngine
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -76,6 +77,13 @@ class MainActivity : AppCompatActivity() {
     private var poolMode = RaidVaultEngine.PoolMode.AUTO_WHOLE_LIBRARY
 
     private lateinit var library: VaultLibrary
+    private lateinit var vaultStore: VaultStore
+
+    // Cascade password for vaulted files. Derived from the master PIN passed by
+    // the lock screen; a dev fallback keeps direct launches usable.
+    private val vaultPassword: String by lazy {
+        intent.getStringExtra("EXTRA_VAULT_KEY") ?: "AlphaVaultDefaultKey"
+    }
 
     private val requestAudioPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -150,6 +158,7 @@ class MainActivity : AppCompatActivity() {
         tvServerUrl = findViewById(R.id.tvServerUrl)
 
         library = VaultLibrary(this)
+        vaultStore = VaultStore(this)
 
         setupEdgeToEdgeInsets()
 
@@ -167,6 +176,7 @@ class MainActivity : AppCompatActivity() {
         val known = library.load().values.sortedBy { it.name.lowercase() }
         renderPoolDisks(known)
         updateStorageBar(known.sumOf { it.size })
+        renderVaultedFiles()
         autoSyncOnStartup()
     }
 
@@ -506,29 +516,113 @@ class MainActivity : AppCompatActivity() {
 
     private fun processVaultFileSelection(uri: Uri) {
         try {
-            val inputStream: InputStream? = contentResolver.openInputStream(uri)
-            val bytes = inputStream?.readBytes() ?: return
-            inputStream.close()
+            val name = displayNameOf(uri)
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
 
-            // 1. Maxed Out Cascade 768-bit Multi-Cipher Encryption
-            val encryptedBytes = CryptoEngine.encryptPayload(bytes, "MasterVaultPassword")
-
-            // 2. Encode with RAID-Z2 Dual-Parity + Hot Spare Replication across library
-            val raidZ2Result = RaidVaultEngine.encodeRaidZ2WithHotSpares(
-                fileBytes = encryptedBytes,
-                numDataChunks = 4,
-                enableHotSpares = true
-            )
+            // Encrypt (768-bit cascade) + RAID-Z2 chunk + persist to the durable vault.
+            val vaulted = vaultStore.vault(name, bytes, vaultPassword)
 
             Toast.makeText(
                 this,
-                "File encrypted with 768-bit Cascade & distributed into ${raidZ2Result.chunks.size} FLAC tracks!\nMaximum Quantum-Grade Protection.",
+                "Vaulted \"${vaulted.name}\": ${formatSize(vaulted.originalSize)} encrypted into ${vaulted.chunkCount} RAID chunks.",
                 Toast.LENGTH_LONG
             ).show()
 
-            refreshVaultList()
+            renderVaultedFiles()
         } catch (e: Exception) {
             Toast.makeText(this, "Vault Error: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun displayNameOf(uri: Uri): String {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx)?.let { return it }
+            }
+        return uri.lastPathSegment ?: "vaulted_file"
+    }
+
+    private fun renderVaultedFiles() {
+        val files = if (isDecoyMode) emptyList() else vaultStore.list()
+        for (i in vaultFileList.childCount - 1 downTo 0) {
+            if (vaultFileList.getChildAt(i) !== tvEmptyVault) {
+                vaultFileList.removeViewAt(i)
+            }
+        }
+        if (files.isEmpty()) {
+            tvEmptyVault.visibility = View.VISIBLE
+            return
+        }
+        tvEmptyVault.visibility = View.GONE
+        for (f in files) {
+            vaultFileList.addView(buildVaultedRow(f))
+        }
+    }
+
+    private fun buildVaultedRow(file: VaultStore.VaultedFile): View {
+        val row = TextView(this)
+        val pad = dp(14)
+        row.setPadding(pad, pad, pad, pad)
+        row.setBackgroundResource(R.drawable.bg_cyber_card)
+        row.setTextColor(ContextCompat.getColor(this, R.color.av_text_primary))
+        row.textSize = 13f
+        row.text = "🔒 ${file.name}\n${formatSize(file.originalSize)} · ${file.chunkCount} chunks · tap to restore"
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) }
+        row.layoutParams = lp
+        row.setOnClickListener { confirmRestore(file) }
+        return row
+    }
+
+    private fun confirmRestore(file: VaultStore.VaultedFile) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Restore vaulted file")
+            .setMessage("Reconstruct and decrypt \"${file.name}\" back into your Downloads folder?")
+            .setPositiveButton("Restore") { _, _ -> restoreVaultedFile(file) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun restoreVaultedFile(file: VaultStore.VaultedFile) {
+        Thread {
+            val result = runCatching {
+                val (name, plain) = vaultStore.restore(file.fileId, vaultPassword)
+                writeToDownloads(name, plain)
+                name
+            }
+            runOnUiThread {
+                result.onSuccess { name ->
+                    Toast.makeText(this, "Restored \"$name\" to Downloads.", Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    Toast.makeText(this, "Restore failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun writeToDownloads(name: String, bytes: ByteArray) {
+        val values = android.content.ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+        }
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        } else {
+            MediaStore.Files.getContentUri("external")
+        }
+        val uri = contentResolver.insert(collection, values)
+            ?: throw IllegalStateException("Could not create Downloads entry")
+        contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
         }
     }
 

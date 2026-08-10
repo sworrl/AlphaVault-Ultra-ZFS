@@ -28,6 +28,16 @@ object CryptoEngine {
 
     private val CASCADE_MAGIC = "AVMAX768".toByteArray(Charsets.UTF_8) // AlphaVault 768-bit Cascade Magic
 
+    // Android's Conscrypt names this cipher "ChaCha20/Poly1305/NoPadding"; the
+    // desktop JDK's SunJCE names it "ChaCha20-Poly1305". Try both so the engine
+    // runs unchanged on device and under host-JVM unit tests.
+    private fun chaChaPoly1305Cipher(): Cipher =
+        try {
+            Cipher.getInstance("ChaCha20/Poly1305/NoPadding")
+        } catch (e: java.security.NoSuchAlgorithmException) {
+            Cipher.getInstance("ChaCha20-Poly1305")
+        }
+
     fun encryptPayload(data: ByteArray, password: String?): ByteArray {
         if (password.isNullOrBlank()) return data
 
@@ -55,7 +65,7 @@ object CryptoEngine {
         // 3. Layer 2 Encryption: ChaCha20-Poly1305 Cascade
         val chachaSecretKey = SecretKeySpec(chachaKeyBytes, "ChaCha20")
         val chachaIvSpec = IvParameterSpec(chachaNonce)
-        val chachaCipher = Cipher.getInstance("ChaCha20/Poly1305/NoPadding")
+        val chachaCipher = chaChaPoly1305Cipher()
         chachaCipher.init(Cipher.ENCRYPT_MODE, chachaSecretKey, chachaIvSpec)
         val layer2Ciphertext = chachaCipher.doFinal(layer1Ciphertext)
 
@@ -113,7 +123,7 @@ object CryptoEngine {
             // 3. Layer 2 Decryption: ChaCha20-Poly1305
             val chachaSecretKey = SecretKeySpec(chachaKeyBytes, "ChaCha20")
             val chachaIvSpec = IvParameterSpec(chachaNonce)
-            val chachaCipher = Cipher.getInstance("ChaCha20/Poly1305/NoPadding")
+            val chachaCipher = chaChaPoly1305Cipher()
             chachaCipher.init(Cipher.DECRYPT_MODE, chachaSecretKey, chachaIvSpec)
             val layer1Ciphertext = chachaCipher.doFinal(layer2Ciphertext)
 
