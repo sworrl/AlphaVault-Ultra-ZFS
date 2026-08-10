@@ -92,10 +92,12 @@ class MainActivity : AppCompatActivity() {
     private var vaultOriginalBytes: Long = 0L
     private var vaultStoredBytes: Long = 0L
 
-    // Cascade password for vaulted files. Derived from the master PIN passed by
-    // the lock screen; a dev fallback keeps direct launches usable.
+    // Cascade password for vaulted files: ONLY the user's code, passed by the
+    // lock screen or calculator. No default key ever, so nothing is encrypted
+    // under a value a modified build could know. Blank means the vault stays
+    // locked (no listing, no vaulting, no restore).
     private val vaultPassword: String by lazy {
-        intent.getStringExtra("EXTRA_VAULT_KEY") ?: "AlphaVaultDefaultKey"
+        intent.getStringExtra("EXTRA_VAULT_KEY").orEmpty()
     }
 
     private val requestAudioPermLauncher = registerForActivityResult(
@@ -254,15 +256,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSettingsDialog() {
-        val items = arrayOf<CharSequence>("Scramble keypad on every keypress (extra secure)")
-        val checked = booleanArrayOf(appSettings.scramblePerPress)
+        val items = arrayOf<CharSequence>(
+            "Scramble keypad on every keypress (extra secure)",
+            "Disguise as Calculator app"
+        )
+        val checked = booleanArrayOf(appSettings.scramblePerPress, isDisguised())
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Options")
             .setMultiChoiceItems(items, checked) { _, which, isChecked ->
-                if (which == 0) appSettings.scramblePerPress = isChecked
+                when (which) {
+                    0 -> appSettings.scramblePerPress = isChecked
+                    1 -> setDisguised(isChecked)
+                }
             }
             .setPositiveButton("Done", null)
             .show()
+    }
+
+    private fun aliasComponent(name: String) =
+        android.content.ComponentName(this, "com.alphasteg.pro.$name")
+
+    private fun isDisguised(): Boolean =
+        packageManager.getComponentEnabledSetting(aliasComponent("LauncherCalc")) ==
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+
+    /** Swap which launcher face is active: the vault icon or the calculator. */
+    private fun setDisguised(on: Boolean) {
+        val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        val disabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        packageManager.setComponentEnabledSetting(
+            aliasComponent("LauncherCalc"), if (on) enabled else disabled,
+            android.content.pm.PackageManager.DONT_KILL_APP
+        )
+        packageManager.setComponentEnabledSetting(
+            aliasComponent("LauncherVault"), if (on) disabled else enabled,
+            android.content.pm.PackageManager.DONT_KILL_APP
+        )
+        Toast.makeText(
+            this,
+            if (on) "Disguised as Calculator. Enter your code in the calculator to unlock."
+            else "Disguise off. The normal AlphaVault icon is back.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     private fun showPanel(panel: View, navItem: View) {
@@ -571,6 +606,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processVaultFileSelection(uri: Uri) {
+        if (vaultPassword.isBlank()) {
+            Toast.makeText(this, "Vault is locked. Unlock with your code first.", Toast.LENGTH_LONG).show()
+            return
+        }
         if (currentPool.isEmpty()) {
             Toast.makeText(
                 this,
@@ -586,21 +625,71 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Could not read the selected file.", Toast.LENGTH_LONG).show()
             return
         }
-        Toast.makeText(this, "Vaulting \"$name\" into your FLAC carriers…", Toast.LENGTH_SHORT).show()
-        Thread {
-            val result = runCatching {
-                vaultVolume.vault(name, bytes, vaultPassword, currentPool, System.currentTimeMillis())
-            }
+        runVaultOperation("Vaulting “$name”", pool = currentPool, key = vaultPassword) { progress ->
+            val entry = vaultVolume.vault(name, bytes, vaultPassword, currentPool, System.currentTimeMillis(), progress)
+            "Vaulted “${entry.name}”: ${formatSize(entry.originalSize)} hidden across ${entry.chunkCount} FLAC carriers."
+        }
+    }
+
+    /**
+     * Run a long vault/restore job on a background thread with a verbose progress
+     * modal. The modal can be hidden (Run in background) without cancelling; a
+     * foreground service keeps the work alive if the app is backgrounded.
+     */
+    private fun runVaultOperation(
+        title: String,
+        pool: List<java.io.File>,
+        key: String,
+        work: (VaultVolume.Progress) -> String
+    ) {
+        val progressText = TextView(this).apply {
+            setPadding(dp(24), dp(20), dp(24), dp(8))
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.av_text_primary))
+            text = "Starting…"
+        }
+        val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = false
+            max = 100
+        }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(progressText)
+            addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(24), 0, dp(24), dp(16))
+            })
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(container)
+            .setCancelable(false)
+            .setNegativeButton("Run in background", null)
+            .create()
+        dialog.show()
+
+        // Keep the process alive while backgrounded.
+        val svc = Intent(this, VaultService::class.java)
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
+        }
+
+        val progress = VaultVolume.Progress { done, total, message ->
             runOnUiThread {
-                result.onSuccess { entry ->
-                    Toast.makeText(
-                        this,
-                        "Vaulted \"${entry.name}\": ${formatSize(entry.originalSize)} hidden across ${entry.chunkCount} FLAC carriers.",
-                        Toast.LENGTH_LONG
-                    ).show()
+                progressText.text = message
+                bar.max = total.coerceAtLeast(1)
+                bar.progress = done.coerceIn(0, bar.max)
+            }
+        }
+
+        Thread {
+            val result = runCatching { work(progress) }
+            runOnUiThread {
+                runCatching { if (dialog.isShowing) dialog.dismiss() }
+                runCatching { stopService(svc) }
+                result.onSuccess { msg ->
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     refreshVaultUi()
                 }.onFailure { e ->
-                    Toast.makeText(this, "Vault error: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }.start()

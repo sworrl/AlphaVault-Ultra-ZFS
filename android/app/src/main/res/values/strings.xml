@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AlphaVault Ultra</string>
+    <string name="calc_app_name">Calculator</string>
     <string name="brand_title">ALPHAVAULT ULTRA</string>
 
     <!-- Main: badges -->

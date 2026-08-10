@@ -20,6 +20,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:extractNativeLibs="true"
+        android:largeHeap="true"
         android:hasFragileUserData="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -30,13 +31,43 @@
 
         <activity
             android:name=".LockScreenActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
+            android:name=".CalculatorActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- Normal launcher face: opens the vault lock screen. -->
+        <activity-alias
+            android:name=".LauncherVault"
+            android:targetActivity=".LockScreenActivity"
+            android:enabled="true"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher"
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <!-- Disguise launcher face: opens the calculator. Toggled at runtime. -->
+        <activity-alias
+            android:name=".LauncherCalc"
+            android:targetActivity=".CalculatorActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_calc"
+            android:roundIcon="@mipmap/ic_calc"
+            android:label="@string/calc_app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".MainActivity"

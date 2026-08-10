@@ -1,6 +1,8 @@
 package com.alphasteg.pro.engine
 
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
 
 /**
  * Hides arbitrary payloads inside real FLAC files without touching the audio.
@@ -29,6 +31,137 @@ object FlacCarrierEngine {
 
     fun isFlac(bytes: ByteArray): Boolean =
         bytes.size >= 4 && bytes.copyOfRange(0, 4).contentEquals(MAGIC)
+
+    fun isFlacFile(file: File): Boolean =
+        runCatching {
+            file.inputStream().use { ins ->
+                val m = ByteArray(4)
+                readFully(ins, m, 4) && m.contentEquals(MAGIC)
+            }
+        }.getOrDefault(false)
+
+    // ---- streaming, file-based operations (never load the audio into memory) ----
+
+    private class MetaRegion(val region: ByteArray, val blocks: List<Block>, val audioStart: Long)
+
+    /** Read just the FLAC metadata region (everything before the audio frames). */
+    private fun parseMetaFromFile(file: File): MetaRegion {
+        file.inputStream().buffered().use { ins ->
+            val magic = ByteArray(4)
+            if (!readFully(ins, magic, 4) || !magic.contentEquals(MAGIC)) {
+                throw IllegalArgumentException("Not a FLAC file: ${file.name}")
+            }
+            val region = ByteArrayOutputStream()
+            region.write(magic)
+            val blocks = ArrayList<Block>()
+            var pos = 4
+            while (true) {
+                val hdr = ByteArray(4)
+                if (!readFully(ins, hdr, 4)) throw IllegalArgumentException("Truncated FLAC metadata")
+                val isLast = hdr[0].toInt() and 0x80 != 0
+                val type = hdr[0].toInt() and 0x7F
+                val len = ((hdr[1].toInt() and 0xFF) shl 16) or
+                    ((hdr[2].toInt() and 0xFF) shl 8) or (hdr[3].toInt() and 0xFF)
+                val data = ByteArray(len)
+                if (!readFully(ins, data, len)) throw IllegalArgumentException("Truncated FLAC block")
+                blocks.add(Block(pos, type, isLast, pos + 4, len))
+                region.write(hdr); region.write(data)
+                pos = pos + 4 + len
+                if (isLast) break
+            }
+            return MetaRegion(region.toByteArray(), blocks, pos.toLong())
+        }
+    }
+
+    /** Rewrite [file] as newMeta followed by the original audio frames, streamed. */
+    private fun rewriteWithMeta(file: File, newMeta: ByteArray, audioStart: Long) {
+        val tmp = File(file.parentFile, ".${file.name}.avtmp")
+        file.inputStream().use { ins ->
+            tmp.outputStream().buffered().use { out ->
+                out.write(newMeta)
+                var toSkip = audioStart
+                while (toSkip > 0) {
+                    val s = ins.skip(toSkip)
+                    if (s <= 0) break
+                    toSkip -= s
+                }
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                }
+            }
+        }
+        if (!tmp.renameTo(file)) {
+            tmp.copyTo(file, overwrite = true)
+            tmp.delete()
+        }
+    }
+
+    /** Insert one APPLICATION block into a FLAC file, streaming the audio. */
+    fun embedIntoFile(file: File, payload: ByteArray) {
+        val blockData = APP_ID + payload
+        require(blockData.size <= MAX_BLOCK) { "Payload too large for one FLAC metadata block." }
+        val meta = parseMetaFromFile(file)
+        val region = meta.region.copyOf()
+        val last = meta.blocks.last()
+        region[last.headerPos] = (region[last.headerPos].toInt() and 0x7F).toByte()
+        val newHeader = byteArrayOf(
+            (0x80 or TYPE_APPLICATION).toByte(),
+            ((blockData.size ushr 16) and 0xFF).toByte(),
+            ((blockData.size ushr 8) and 0xFF).toByte(),
+            (blockData.size and 0xFF).toByte()
+        )
+        rewriteWithMeta(file, region + newHeader + blockData, meta.audioStart)
+    }
+
+    /** Our APPLICATION-block payloads in a FLAC file (reads metadata only). */
+    fun extractAllFromFile(file: File): List<ByteArray> {
+        val meta = parseMetaFromFile(file)
+        val out = ArrayList<ByteArray>()
+        for (b in meta.blocks) {
+            if (b.type != TYPE_APPLICATION || b.length < 4) continue
+            val id = meta.region.copyOfRange(b.dataStart, b.dataStart + 4)
+            if (!id.contentEquals(APP_ID)) continue
+            out.add(meta.region.copyOfRange(b.dataStart + 4, b.dataStart + b.length))
+        }
+        return out
+    }
+
+    /** Remove our matching APPLICATION blocks from a FLAC file. Returns true if changed. */
+    fun removeMatchingInFile(file: File, shouldRemove: (payload: ByteArray) -> Boolean): Boolean {
+        val meta = parseMetaFromFile(file)
+        val kept = meta.blocks.filterNot { b ->
+            if (b.type != TYPE_APPLICATION || b.length < 4) return@filterNot false
+            val id = meta.region.copyOfRange(b.dataStart, b.dataStart + 4)
+            if (!id.contentEquals(APP_ID)) return@filterNot false
+            shouldRemove(meta.region.copyOfRange(b.dataStart + 4, b.dataStart + b.length))
+        }
+        if (kept.size == meta.blocks.size) return false
+        val buf = ByteArrayOutputStream()
+        buf.write(MAGIC)
+        kept.forEachIndexed { i, b ->
+            val isLast = i == kept.lastIndex
+            buf.write((if (isLast) 0x80 else 0x00) or b.type)
+            buf.write((b.length ushr 16) and 0xFF)
+            buf.write((b.length ushr 8) and 0xFF)
+            buf.write(b.length and 0xFF)
+            buf.write(meta.region, b.dataStart, b.length)
+        }
+        rewriteWithMeta(file, buf.toByteArray(), meta.audioStart)
+        return true
+    }
+
+    private fun readFully(ins: InputStream, buf: ByteArray, len: Int = buf.size): Boolean {
+        var off = 0
+        while (off < len) {
+            val n = ins.read(buf, off, len - off)
+            if (n < 0) return false
+            off += n
+        }
+        return true
+    }
 
     private fun walk(bytes: ByteArray): Pair<List<Block>, Int> {
         require(isFlac(bytes)) { "Not a FLAC file (missing fLaC marker)." }
