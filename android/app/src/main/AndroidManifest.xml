@@ -51,6 +51,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".VaultViewerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <!-- Foreground Service for Background DSP Processing -->
         <service
             android:name=".VaultService"

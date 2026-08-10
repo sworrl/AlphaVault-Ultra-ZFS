@@ -27,7 +27,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.alphasteg.pro.data.FlacTrack
 import com.alphasteg.pro.data.VaultLibrary
-import com.alphasteg.pro.data.VaultStore
+import com.alphasteg.pro.data.VaultVolume
 import com.alphasteg.pro.engine.CryptoEngine
 import com.alphasteg.pro.engine.RaidVaultEngine
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -77,7 +77,16 @@ class MainActivity : AppCompatActivity() {
     private var poolMode = RaidVaultEngine.PoolMode.AUTO_WHOLE_LIBRARY
 
     private lateinit var library: VaultLibrary
-    private lateinit var vaultStore: VaultStore
+    private val vaultVolume = VaultVolume()
+
+    // The current carrier pool as real files (populated when All-Files access lets
+    // us scan the filesystem). Vaulting embeds into these FLAC files.
+    private var currentPool: List<java.io.File> = emptyList()
+    private var poolBytes: Long = 0L
+    private var trackCount: Int = 0
+    private var vaultFileCount: Int = 0
+    private var vaultOriginalBytes: Long = 0L
+    private var vaultStoredBytes: Long = 0L
 
     // Cascade password for vaulted files. Derived from the master PIN passed by
     // the lock screen; a dev fallback keeps direct launches usable.
@@ -158,7 +167,6 @@ class MainActivity : AppCompatActivity() {
         tvServerUrl = findViewById(R.id.tvServerUrl)
 
         library = VaultLibrary(this)
-        vaultStore = VaultStore(this)
 
         setupEdgeToEdgeInsets()
 
@@ -175,15 +183,17 @@ class MainActivity : AppCompatActivity() {
         // Show whatever the library already knew, then sync in the background.
         val known = library.load().values.sortedBy { it.name.lowercase() }
         renderPoolDisks(known)
-        updateStorageBar(known.sumOf { it.size }, known.size)
-        renderVaultedFiles()
+        trackCount = known.size
+        poolBytes = known.sumOf { it.size }
+        currentPool = known.map { java.io.File(it.path) }.filter { it.isFile }
+        updateStorageBar(poolBytes, trackCount)
         autoSyncOnStartup()
     }
 
     override fun onResume() {
         super.onResume()
         // Catch tracks added or removed while the app was backgrounded.
-        if (!isDecoyMode && hasAudioPermission()) {
+        if (!isDecoyMode && (hasAudioPermission() || hasAllFilesAccess())) {
             syncLibrary(userTriggered = false)
         }
     }
@@ -306,9 +316,14 @@ class MainActivity : AppCompatActivity() {
         Thread {
             val scanned = queryFlacTracks()
             val result = library.sync(scanned)
+            val pool = result.tracks.map { java.io.File(it.path) }.filter { it.isFile }
             runOnUiThread {
+                trackCount = result.tracks.size
+                poolBytes = result.totalBytes
+                currentPool = pool
                 renderPoolDisks(result.tracks)
                 updateStorageBar(result.totalBytes, result.tracks.size)
+                refreshVaultUi()
                 val poolSize = formatSize(result.totalBytes)
                 tvVaultStats.text = getString(
                     R.string.vault_stats_synced,
@@ -447,15 +462,14 @@ class MainActivity : AppCompatActivity() {
         barUsed.requestLayout()
         barFree.requestLayout()
 
-        val vault = vaultStore.usage()
         tvStorageDetail.text = buildString {
             append(String.format(Locale.US, "Device: %s used of %s\n", formatSize(used), formatSize(total)))
             append(String.format(Locale.US, "Music pool: %d FLAC carriers · %s\n", trackCount, formatSize(poolBytes)))
             append(String.format(
                 Locale.US,
-                "Vault: %d file%s · %s stored (%s original)",
-                vault.fileCount, if (vault.fileCount == 1) "" else "s",
-                formatSize(vault.storedBytes), formatSize(vault.originalBytes)
+                "Vault: %d file%s · %s hidden in carriers (%s original)",
+                vaultFileCount, if (vaultFileCount == 1) "" else "s",
+                formatSize(vaultStoredBytes), formatSize(vaultOriginalBytes)
             ))
         }
     }
@@ -523,23 +537,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processVaultFileSelection(uri: Uri) {
-        try {
-            val name = displayNameOf(uri)
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
-
-            // Encrypt (768-bit cascade) + RAID-Z2 chunk + persist to the durable vault.
-            val vaulted = vaultStore.vault(name, bytes, vaultPassword)
-
+        if (currentPool.isEmpty()) {
             Toast.makeText(
                 this,
-                "Vaulted \"${vaulted.name}\": ${formatSize(vaulted.originalSize)} encrypted into ${vaulted.chunkCount} RAID chunks.",
+                "Grant All-files access and sync your FLAC library first, so there are carriers to vault into.",
                 Toast.LENGTH_LONG
             ).show()
-
-            renderVaultedFiles()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Vault Error: ${e.message}", Toast.LENGTH_LONG).show()
+            if (canRequestAllFilesAccess() && !hasAllFilesAccess()) promptAllFilesAccess()
+            return
         }
+        val name = displayNameOf(uri)
+        val bytes = runCatching { contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+        if (bytes == null) {
+            Toast.makeText(this, "Could not read the selected file.", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this, "Vaulting \"$name\" into your FLAC carriers…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = runCatching {
+                vaultVolume.vault(name, bytes, vaultPassword, currentPool, System.currentTimeMillis())
+            }
+            runOnUiThread {
+                result.onSuccess { entry ->
+                    Toast.makeText(
+                        this,
+                        "Vaulted \"${entry.name}\": ${formatSize(entry.originalSize)} hidden across ${entry.chunkCount} FLAC carriers.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    refreshVaultUi()
+                }.onFailure { e ->
+                    Toast.makeText(this, "Vault error: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 
     private fun displayNameOf(uri: Uri): String {
@@ -551,53 +581,94 @@ class MainActivity : AppCompatActivity() {
         return uri.lastPathSegment ?: "vaulted_file"
     }
 
-    private fun renderVaultedFiles() {
-        val files = if (isDecoyMode) emptyList() else vaultStore.list()
+    /** Read the encrypted volume index off the carriers and repaint the vault list + stats. */
+    private fun refreshVaultUi() {
+        if (isDecoyMode) {
+            renderVaultedRows(emptyList())
+            vaultFileCount = 0; vaultOriginalBytes = 0; vaultStoredBytes = 0
+            updateStorageBar(poolBytes, trackCount)
+            return
+        }
+        val pool = currentPool
+        Thread {
+            val entries = runCatching { vaultVolume.list(pool, vaultPassword) }.getOrDefault(emptyList())
+            val stored = runCatching { vaultVolume.usageBytes(pool, vaultPassword) }.getOrDefault(0L)
+            runOnUiThread {
+                vaultFileCount = entries.size
+                vaultOriginalBytes = entries.sumOf { it.originalSize }
+                vaultStoredBytes = stored
+                renderVaultedRows(entries)
+                updateStorageBar(poolBytes, trackCount)
+            }
+        }.start()
+    }
+
+    private fun renderVaultedRows(entries: List<VaultVolume.Entry>) {
         for (i in vaultFileList.childCount - 1 downTo 0) {
             if (vaultFileList.getChildAt(i) !== tvEmptyVault) {
                 vaultFileList.removeViewAt(i)
             }
         }
-        if (files.isEmpty()) {
+        if (entries.isEmpty()) {
             tvEmptyVault.visibility = View.VISIBLE
             return
         }
         tvEmptyVault.visibility = View.GONE
-        for (f in files) {
-            vaultFileList.addView(buildVaultedRow(f))
-        }
+        for (e in entries) vaultFileList.addView(buildVaultedRow(e))
     }
 
-    private fun buildVaultedRow(file: VaultStore.VaultedFile): View {
+    private fun buildVaultedRow(file: VaultVolume.Entry): View {
         val row = TextView(this)
         val pad = dp(14)
         row.setPadding(pad, pad, pad, pad)
         row.setBackgroundResource(R.drawable.bg_cyber_card)
         row.setTextColor(ContextCompat.getColor(this, R.color.av_text_primary))
         row.textSize = 13f
-        row.text = "🔒 ${file.name}\n${formatSize(file.originalSize)} · ${file.chunkCount} chunks · tap to restore"
+        row.text = "🔒 ${file.name}\n${formatSize(file.originalSize)} · ${file.chunkCount} chunks across carriers"
         val lp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = dp(8) }
         row.layoutParams = lp
-        row.setOnClickListener { confirmRestore(file) }
+        row.setOnClickListener { showVaultedFileMenu(file) }
         return row
     }
 
-    private fun confirmRestore(file: VaultStore.VaultedFile) {
+    private fun showVaultedFileMenu(file: VaultVolume.Entry) {
+        val options = arrayOf("View in app", "Restore to Downloads", "Delete from vault")
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Restore vaulted file")
-            .setMessage("Reconstruct and decrypt \"${file.name}\" back into your Downloads folder?")
-            .setPositiveButton("Restore") { _, _ -> restoreVaultedFile(file) }
-            .setNegativeButton("Cancel", null)
+            .setTitle(file.name)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> viewVaultedFile(file)
+                    1 -> restoreVaultedFile(file)
+                    2 -> confirmDeleteVaulted(file)
+                }
+            }
             .show()
     }
 
-    private fun restoreVaultedFile(file: VaultStore.VaultedFile) {
+    /** Decrypt into memory and open a secure in-app viewer (no plaintext written to disk). */
+    private fun viewVaultedFile(file: VaultVolume.Entry) {
+        val pool = currentPool
+        Toast.makeText(this, "Opening \"${file.name}\"…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = runCatching { vaultVolume.restore(file.fileId, vaultPassword, pool).second }
+            runOnUiThread {
+                result.onSuccess { bytes ->
+                    VaultViewerActivity.show(this, file.name, bytes)
+                }.onFailure { e ->
+                    Toast.makeText(this, "Cannot open: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun restoreVaultedFile(file: VaultVolume.Entry) {
+        val pool = currentPool
         Thread {
             val result = runCatching {
-                val (name, plain) = vaultStore.restore(file.fileId, vaultPassword)
+                val (name, plain) = vaultVolume.restore(file.fileId, vaultPassword, pool)
                 writeToDownloads(name, plain)
                 name
             }
@@ -609,6 +680,21 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    private fun confirmDeleteVaulted(file: VaultVolume.Entry) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Delete from vault")
+            .setMessage("Remove \"${file.name}\" from the carriers? This cannot be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                val pool = currentPool
+                Thread {
+                    runCatching { vaultVolume.delete(file.fileId, vaultPassword, pool) }
+                    runOnUiThread { refreshVaultUi() }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun writeToDownloads(name: String, bytes: ByteArray) {
