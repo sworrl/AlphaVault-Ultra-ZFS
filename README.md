@@ -1,42 +1,176 @@
-# AlphaVault Ultra ZFS 🔒🎵
+<h1 align="center">
+  <br>
+  AlphaVault Ultra ZFS
+  <br>
+  <sub><em>an upgraded fork of <a href="https://github.com/bennjordan/AlphaSteg">AlphaSteg</a> that turns a FLAC library into a fault-tolerant vault</em></sub>
+  <br>
+</h1>
 
-**AlphaVault Ultra ZFS** is an official enhanced fork of [AlphaSteg](https://github.com/bennjordan/AlphaSteg). It transforms lossless FLAC audio collections into a high-availability, fault-tolerant steganographic vault protected by **768-bit Multi-Cipher Cascade Encryption** and **ZFS RAID-Z2 Dual-Parity + Hot Spare Mirroring**.
+<p align="center">
+  <a href="https://github.com/sworrl/AlphaVault-Ultra-ZFS"><img src="https://img.shields.io/badge/Fork_of-bennjordan%2FAlphaSteg-blue?style=for-the-badge&labelColor=1a1a2e" alt="Fork of bennjordan/AlphaSteg"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Android_app-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin Android app">
+  <img src="https://img.shields.io/badge/Desktop_server-Python_%2B_FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="Python FastAPI server">
+  <img src="https://img.shields.io/badge/minSdk-26_(Android_8.0)-3DDC84?style=flat-square&logo=android&logoColor=white" alt="minSdk 26">
+  <img src="https://img.shields.io/badge/targetSdk-34_(Android_14)-3DDC84?style=flat-square&logo=android&logoColor=white" alt="targetSdk 34">
+  <img src="https://img.shields.io/badge/APK-6.3_MB-e67e22?style=flat-square" alt="6.3 MB APK">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Cascade-AES--256--GCM_%2B_ChaCha20--Poly1305-e74c3c?style=flat-square&labelColor=1a1a2e" alt="Cascade cipher">
+  <img src="https://img.shields.io/badge/KDF-PBKDF2--HMAC--SHA512_%C3%97_500k-9b59b6?style=flat-square&labelColor=1a1a2e" alt="PBKDF2-HMAC-SHA512 500k">
+  <img src="https://img.shields.io/badge/Integrity-HMAC--SHA512-2ecc71?style=flat-square&labelColor=1a1a2e" alt="HMAC-SHA512">
+  <img src="https://img.shields.io/badge/Storage-RAID--Z2_%2B_hot_spare-f39c12?style=flat-square&labelColor=1a1a2e" alt="RAID-Z2 hot spare">
+</p>
 
 ---
 
-## 🌟 Key Features
+A one-terabyte FLAC library is thousands of 16-bit samples per second that nobody inspects at the bit level. AlphaVault hides encrypted files in the least-significant bit of those samples, spreads the pieces across many tracks with parity, and mirrors every piece to a second track. Delete an album, corrupt a track, or swap out a disk, and the hidden file still reassembles.
 
-### 🛡️ 768-Bit Multi-Cipher Cascade Encryption
-- **Layer 1**: AES-256-GCM (Authenticated Galois/Counter Mode with 128-bit GCM tag).
-- **Layer 2**: ChaCha20-Poly1305 (256-bit Stream Cipher + 128-bit Poly1305 authenticator).
-- **Outer Authentication**: HMAC-SHA512 integrity tag over encrypted vault envelopes.
-- **Key Stretch**: PBKDF2-HMAC-SHA512 with 500,000 iterations (768-bit combined key entropy).
+This repository is a fork of [bennjordan/AlphaSteg](https://github.com/bennjordan/AlphaSteg). The upstream project is a desktop steganography server. This fork keeps that server and adds a native Kotlin Android app plus a heavier crypto and storage layer. What each half does, and exactly where they differ, is spelled out below.
 
-### 💾 ZFS RAID-Z2 & Hot Spare Storage Pool
-- **Whole Library Auto-Pool**: Scans `/sdcard/Music/` FLAC audio tracks to create a unified steganographic RAID array.
-- **RAID-Z2 Dual Parity ($P + Q$)**: Protects data with both XOR Parity ($P$) and Galois Shift-XOR Parity ($Q$).
-- **Hot Spare Mirroring**: Automatically replicates chunks to hot-spare tracks in separate album folders.
-- **Multi-Album Swapping Resilience**: Delete or swap out 2-3 full music albums without losing any vaulted files or requiring manual resilvering!
+## Contents
 
-### 📱 100% Pure Native Kotlin Android App
-- **Native Android 14/15 Engine**: Ultra-compact 3.1 MB APK compiled natively for ARM64 with zero Python runtime overhead.
-- **16 KB Page Alignment Compliant**: Native libraries configured with `-Wl,-z,max-page-size=16384` for Android 15 & Pixel 10 compliance.
-- **Display Cutout & Edge-to-Edge Integration**: Dynamic camera punch-hole and status bar safe inset adaptation.
-- **60 FPS Real-time Stego Visualizer**: Custom Kotlin canvas rendering 32 dynamic audio spectrum frequency bars and real-time oscilloscope waveforms.
-- **Biometric & Randomized Keypad Security**: Fingerprint & Face Unlock integration with anti-smudge 0-9 randomized keypad grid and Decoy Panic PIN mode.
+- [What the fork adds](#what-the-fork-adds)
+- [Two halves, one repo](#two-halves-one-repo)
+- [The Android app](#the-android-app)
+- [Cascade encryption, layer by layer](#cascade-encryption-layer-by-layer)
+- [RAID-Z2 storage and what it actually recovers](#raid-z2-storage-and-what-it-actually-recovers)
+- [Build the APK](#build-the-apk)
+- [Run the desktop server](#run-the-desktop-server)
+- [Security notes, stated plainly](#security-notes-stated-plainly)
+- [Project layout](#project-layout)
+- [Fork attribution and license](#fork-attribution-and-license)
 
----
+## What the fork adds
 
-## 🚀 Quick Start (Android)
+Upstream AlphaSteg is a Python FastAPI server that encodes and decodes payloads in audio using LSB and multi-frequency shift keying (MFSK), with AES-256-GCM as the single cipher. This fork leaves that server in place and builds on top of it:
+
+| Capability | Upstream AlphaSteg | AlphaVault Ultra ZFS |
+|---|---|---|
+| Encryption | AES-256-GCM, one layer | AES-256-GCM then ChaCha20-Poly1305, with an outer HMAC-SHA512 tag |
+| Key derivation | PBKDF2-HMAC-SHA256, 50,000 iterations | PBKDF2-HMAC-SHA512, 500,000 iterations, 768-bit output |
+| Storage model | one carrier per payload | payload split into 4 data chunks + P/Q parity, then mirrored to hot spares |
+| Native client | none (browser UI over the server) | Kotlin Android app, 8 source files, 6.3 MB APK |
+| Lock screen | none | biometric unlock, randomized keypad, decoy PIN |
+
+The Android app carries its own Kotlin implementation of the cascade cipher and the RAID layer. It does not call the Python server; the two are independent.
+
+## Two halves, one repo
+
+**Desktop server** (`main.py`, `static/`). FastAPI on `127.0.0.1:8000`, started with `python main.py`. It resolves audio URLs through yt-dlp, streams carriers, and encodes or decodes payloads by LSB or MFSK. MFSK uses eight tones from 10,000 to 11,400 Hz in the standard and balanced presets, and a sixteen-tone bank from 8,000 to 11,300 Hz in the fast preset; decoding runs a Goertzel filter per tone. Encryption here is AES-256-GCM with a `PBKDF2-HMAC-SHA256` key at 50,000 iterations. Payloads carry an `AESA` magic prefix.
+
+**Android app** (`android/`). A native Kotlin app with no Python runtime. It hides files in FLAC sample LSBs, encrypts with the 768-bit cascade, and distributes chunks with parity and hot-spare mirroring. This is the half most of this README is about.
+
+## The Android app
+
+<p align="center">
+  <img src="screen.png" alt="AlphaVault Ultra ZFS Android UI" width="320">
+</p>
+
+The app opens on a lock screen and, once unlocked, shows three panels behind a floating navigation dock.
+
+**Lock screen** (`LockScreenActivity`). On first run it asks you to set a master PIN and derives a decoy PIN from it. On later runs it offers biometric unlock through `androidx.biometric` when the device has an enrolled fingerprint or face, and falls back to the PIN. The keypad reshuffles its digits after every keypress so shoulder-surfers and screen-grease patterns give nothing away. Entering the decoy PIN unlocks the app in decoy mode, which reports an empty vault.
+
+**Vault panel.** Pick any file and the app encrypts it with the cascade cipher, then splits the ciphertext into four data chunks plus two parity chunks and mirrors the set to hot-spare slots. A radio control chooses between pooling the whole music library automatically and selecting FLAC disks by hand.
+
+**Spectrum panel.** A custom `View` draws 32 frequency bars and an oscilloscope trace at roughly 60 frames per second (a 16 ms frame loop). It now stops drawing whenever the panel is hidden, so it does not burn cycles in the background.
+
+**Server panel.** A switch starts `VaultService`, a foreground service of type `dataSync` that holds a low-priority notification while background work runs.
+
+Under the hood: `minSdk 26` (Android 8.0), `targetSdk 34` (Android 14), `versionName 1.0.0-Ultra-ZFS`, view binding on, R8 with resource shrinking in both debug and release. The whole thing is eight Kotlin files.
+
+## Cascade encryption, layer by layer
+
+`CryptoEngine.encryptPayload` in the Android app builds one envelope from a single password:
+
+1. **Derive keys.** `PBKDF2WithHmacSHA512` runs 500,000 iterations over the password and a fresh 32-byte salt, producing 768 bits (96 bytes). Those 96 bytes split into three 32-byte keys: one for AES, one for ChaCha20, one for the HMAC.
+2. **Layer 1: AES-256-GCM.** Encrypts the plaintext with a 12-byte nonce and a 128-bit GCM tag.
+3. **Layer 2: ChaCha20-Poly1305.** Encrypts the AES output again with its own 12-byte nonce.
+4. **Outer tag: HMAC-SHA512.** Computed over `magic || salt || aesNonce || chachaNonce || ciphertext`, where the magic is the eight bytes `AVMAX768`.
+
+The stored envelope is `magic || salt || aesNonce || chachaNonce || ciphertext || hmacTag`. Decryption verifies the HMAC first and refuses to proceed if it fails, so a wrong password or a tampered byte is caught before either cipher runs.
+
+| Parameter | Value |
+|---|---|
+| KDF | PBKDF2-HMAC-SHA512, 500,000 iterations |
+| Derived key material | 768 bits, split 256 / 256 / 256 |
+| Salt | 32 bytes, random per payload |
+| Layer 1 | AES-256-GCM, 96-bit nonce, 128-bit tag |
+| Layer 2 | ChaCha20-Poly1305, 96-bit nonce |
+| Outer integrity | HMAC-SHA512, verified before decryption |
+
+## RAID-Z2 storage and what it actually recovers
+
+`RaidVaultEngine.encodeRaidZ2WithHotSpares` takes the encrypted envelope and:
+
+- pads it and cuts it into `N` data chunks (default 4),
+- computes a **P** parity chunk (XOR across the data chunks),
+- computes a **Q** parity chunk (a weighted shift-XOR across the data chunks),
+- appends a **hot-spare mirror**: a full copy of every chunk above, data and parity alike.
+
+So a default encode produces 4 data + 2 parity = 6 primary chunks, plus 6 mirrored spares, 12 in all. Each chunk is meant to ride inside a separate FLAC track.
+
+Recovery, in `reconstructRaidZ2`, works like this: for each data chunk it first looks for the primary copy, then the hot-spare mirror. If every data chunk is found that way, the file reassembles directly. If exactly one data chunk is missing from both its primary and its mirror, it is rebuilt from the P parity by XOR. Beyond a single missing data chunk with no surviving mirror, recovery raises an error.
+
+That is the honest boundary: the hot-spare mirror means you can lose whole tracks freely as long as each chunk survives in one of its two homes, and the P parity buys back one further data chunk on top of that. The Q parity is computed and stored but the current reconstruction path does not use it, so do not count on two-independent-chunk recovery yet.
+
+## Build the APK
+
+The Android build needs a JDK 17 and the Android SDK (compileSdk 34). Point `android/local.properties` at your SDK with `sdk.dir=/path/to/Android/Sdk`.
 
 ```bash
 cd android
 ./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/AlphaVault-Ultra-ZFS.apk
 ```
 
----
+The output filename is set in `app/build.gradle`, so both debug and release variants emit `AlphaVault-Ultra-ZFS.apk`. Android Studio (Hedgehog or newer) also opens the `android/` folder directly and syncs Gradle on its own.
 
-## 📜 Fork Attribution
+## Run the desktop server
 
-This project is an official enhanced fork of [bennjordan/AlphaSteg](https://github.com/bennjordan/AlphaSteg), expanded with native Android 14/15 support, multi-layer post-quantum grade cascade cryptography, and ZFS RAID-Z2 distributed steganography.
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python main.py                    # serves http://127.0.0.1:8000
+```
+
+`requirements.txt` pins FastAPI, uvicorn, yt-dlp, httpx, requests, python-multipart, numpy, and cryptography. On Windows, `install.bat` runs `setup.ps1` to build the virtual environment and `run.bat` launches the server.
+
+## Security notes, stated plainly
+
+- **PIN storage.** The master and decoy PINs are stored as SHA-256 over a fixed string, `AlphaVault_Salt_2026_` plus the PIN. That is a static salt and a fast hash, so it resists a casual reader of the shared-prefs file but not an offline brute force of a short PIN. `SecurityManager` also provisions a hardware-backed AES-256 key in the Android KeyStore; that key is created but the PIN check does not currently route through it.
+- **Two KDFs, one on purpose and one to watch.** The Android app derives keys with PBKDF2-HMAC-SHA512 at 500,000 iterations; the Python server uses PBKDF2-HMAC-SHA256 at 50,000. Envelopes are not interchangeable between the two halves, and their magic prefixes (`AVMAX768` versus `AESA`) differ.
+- **LSB breaks under re-encoding.** The Android LSB engine writes one payload bit per 16-bit PCM sample behind the two-byte magic `0xAF 0x55` and a four-byte length. Re-encoding the carrier to a lossy format, or any lossy transcode, destroys the hidden bits. Keep carriers lossless end to end.
+- **This is a hobby-grade tool.** The cryptography uses standard primitives correctly at the envelope level, but the project has not had a formal review. Do not stake anything you cannot afford to lose on it.
+
+## Project layout
+
+```
+AlphaVault-Ultra-ZFS/
+├── main.py                     desktop FastAPI steganography server
+├── static/                     browser UI for the server
+├── requirements.txt            Python dependencies
+├── verify_digital_stego.py     round-trip verification script
+├── android/
+│   └── app/src/main/
+│       ├── java/com/alphasteg/pro/
+│       │   ├── LockScreenActivity.kt      biometric + randomized keypad + decoy PIN
+│       │   ├── MainActivity.kt            three panels, floating nav dock
+│       │   ├── VaultService.kt            foreground dataSync service
+│       │   ├── engine/CryptoEngine.kt     768-bit cascade cipher
+│       │   ├── engine/RaidVaultEngine.kt  RAID-Z2 + hot-spare chunking
+│       │   ├── engine/LsbStegoEngine.kt   FLAC LSB embed/extract
+│       │   └── security/SecurityManager.kt  KeyStore key, PIN handling
+│       └── res/                           layouts, drawables, theme, strings
+└── README.md
+```
+
+## Fork attribution and license
+
+AlphaVault Ultra ZFS is a fork of [bennjordan/AlphaSteg](https://github.com/bennjordan/AlphaSteg). The desktop server and the LSB/MFSK stego core come from that project. This fork adds the Kotlin Android app, the two-layer cascade cipher, the PBKDF2-HMAC-SHA512 key schedule, and the RAID-Z2 hot-spare storage layer.
+
+Author of the fork: sworrl (agent.jearl@gmail.com). For licensing of the upstream code, see the original repository.
