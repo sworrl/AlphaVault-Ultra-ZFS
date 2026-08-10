@@ -46,19 +46,34 @@ class VaultVolume {
     // ---------- index ----------
 
     fun loadIndex(pool: List<File>, password: String): Index {
-        var best: Index? = null
-        var bestGen = -1L
-        for (f in pool) {
-            if (!FlacCarrierEngine.isFlacFile(f)) continue
+        // Scan carriers in parallel (I/O bound). Each yields its best decryptable
+        // index replica; the global winner is the highest generation.
+        val candidates = parallelMap(pool) { f ->
+            if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap null
+            var best: Pair<Long, Index>? = null
             for (payload in extractOrEmpty(f)) {
                 val blob = VaultCodec.decodeIndex(payload) ?: continue
-                if (!blob.crcOk || blob.generation <= bestGen) continue
+                if (!blob.crcOk) continue
+                if (best != null && blob.generation <= best!!.first) continue
                 val json = runCatching { CryptoEngine.decryptPayload(blob.encBody, password) }.getOrNull() ?: continue
                 val parsed = runCatching { parseIndex(blob.generation, json) }.getOrNull() ?: continue
-                best = parsed; bestGen = blob.generation
+                best = blob.generation to parsed
             }
+            best
         }
-        return best ?: Index(0, emptyList())
+        return candidates.filterNotNull().maxByOrNull { it.first }?.second ?: Index(0, emptyList())
+    }
+
+    /** Run [f] over the carriers concurrently and collect the results in order. */
+    private fun <T> parallelMap(items: List<File>, f: (File) -> T): List<T> {
+        if (items.size <= 1) return items.map(f)
+        val threads = minOf(8, items.size)
+        val exec = java.util.concurrent.Executors.newFixedThreadPool(threads)
+        return try {
+            items.map { exec.submit(java.util.concurrent.Callable { f(it) }) }.map { it.get() }
+        } finally {
+            exec.shutdown()
+        }
     }
 
     fun list(pool: List<File>, password: String): List<Entry> =
@@ -127,15 +142,15 @@ class VaultVolume {
     }
 
     private fun gatherChunks(fileId: String, expectedCount: Int, pool: List<File>): Map<Int, ByteArray> {
-        val available = HashMap<Int, ByteArray>()
-        for (f in pool) {
-            if (!FlacCarrierEngine.isFlacFile(f)) continue
-            for (payload in extractOrEmpty(f)) {
-                val c = VaultCodec.decodeChunk(payload) ?: continue
-                if (c.fileId != fileId || !c.crcOk) continue
-                available[c.index] = c.data
+        val perFile = parallelMap(pool) { f ->
+            if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap emptyList<Pair<Int, ByteArray>>()
+            extractOrEmpty(f).mapNotNull { payload ->
+                val c = VaultCodec.decodeChunk(payload) ?: return@mapNotNull null
+                if (c.fileId != fileId || !c.crcOk) null else c.index to c.data
             }
         }
+        val available = HashMap<Int, ByteArray>()
+        for (list in perFile) for ((idx, data) in list) available[idx] = data
         return available
     }
 
@@ -225,14 +240,11 @@ class VaultVolume {
         }
     }
 
-    fun usageBytes(pool: List<File>, password: String): Long {
-        var total = 0L
-        for (f in pool) {
-            if (!FlacCarrierEngine.isFlacFile(f)) continue
-            for (p in extractOrEmpty(f)) total += p.size
-        }
-        return total
-    }
+    fun usageBytes(pool: List<File>, password: String): Long =
+        parallelMap(pool) { f ->
+            if (!FlacCarrierEngine.isFlacFile(f)) 0L
+            else extractOrEmpty(f).sumOf { it.size.toLong() }
+        }.sum()
 
     // ---------- carrier selection ----------
 

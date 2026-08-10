@@ -54,6 +54,7 @@
     <string name="lock_status_setup_duress">Now set a DIFFERENT duress code. Entering it later wipes the vault.</string>
     <string name="lock_status_confirm_duress">Re-enter your duress code to confirm</string>
     <string name="btn_unlock">UNLOCK</string>
+    <string name="btn_open_existing">Open an existing vault by code</string>
     <string name="btn_next">NEXT</string>
     <string name="btn_create_vault">CREATE VAULT</string>
     <string name="key_backspace">⌫</string>

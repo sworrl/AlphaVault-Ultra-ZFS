@@ -184,6 +184,9 @@ for every pair of lost data chunks and checks the bytes come back exactly.
   Typing the code into it, alone or inside an equation, unlocks the real app.
 - **Compartments.** A different code decrypts a different index, so the same
   library holds separate vaults; each is invisible to the others.
+- **Open existing.** A fresh install can open a vault that already exists on a
+  library by entering its code ("Open an existing vault by code" on the lock
+  screen), without local onboarding, so no verifier is stored on the phone.
 
 ## Security notes
 
@@ -201,6 +204,10 @@ for every pair of lost data chunks and checks the bytes come back exactly.
 - `FLAG_SECURE` blocks screenshots, screen recording, and recents thumbnails;
   backups and cleartext traffic are disabled.
 - Not audited. Do not stake anything you cannot afford to lose.
+
+See [SECURITY.md](SECURITY.md) for the full threat model, including what the
+container-level steganography does and does not hide and what "no trace on the
+phone" actually means.
 
 ## Build
 

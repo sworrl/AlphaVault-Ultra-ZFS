@@ -84,6 +84,7 @@ class LockScreenActivity : AppCompatActivity() {
         applyStep()
 
         btnSubmit.setOnClickListener { onSubmit() }
+        findViewById<TextView>(R.id.btnOpenExisting).setOnClickListener { openExistingByCode() }
         btnKeyClear.setOnClickListener {
             if (enteredPin.isNotEmpty()) {
                 enteredPin = enteredPin.dropLast(1)
@@ -219,6 +220,19 @@ class LockScreenActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Open a vault that already exists on the current library/DAC using just its
+     * code, without local onboarding. No credentials are stored, so a fresh
+     * install can open a portable vault and leave no verifier behind.
+     */
+    private fun openExistingByCode() {
+        if (!securityManager.isValidPin(enteredPin)) {
+            toast("Enter the vault code first (at least ${SecurityManager.MIN_LEN} characters).")
+            return
+        }
+        proceedToMain(isDecoy = false, wipe = false, key = enteredPin)
     }
 
     private fun setupKeypad() {
