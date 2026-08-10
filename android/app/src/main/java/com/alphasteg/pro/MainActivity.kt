@@ -216,6 +216,9 @@ class MainActivity : AppCompatActivity() {
         currentPool = known.map { java.io.File(it.path) }.filter { it.isFile }
         updateStorageBar(poolBytes, trackCount)
         autoSyncOnStartup()
+
+        // Quietly check GitHub for a newer release; only prompts if one exists.
+        if (!isDecoyMode) checkForUpdate(manual = false)
     }
 
     override fun onResume() {
@@ -279,8 +282,58 @@ class MainActivity : AppCompatActivity() {
                     1 -> setDisguised(isChecked)
                 }
             }
+            .setNeutralButton("Check for updates") { _, _ -> checkForUpdate(manual = true) }
             .setPositiveButton("Done", null)
             .show()
+    }
+
+    /** Ask GitHub for a newer release; prompt to download and install if there is one. */
+    private fun checkForUpdate(manual: Boolean) {
+        if (manual) Toast.makeText(this, "Checking for updates…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val release = runCatching {
+                com.alphasteg.pro.update.UpdateManager.checkLatest(BuildConfig.VERSION_NAME)
+            }.getOrNull()
+            runOnUiThread {
+                if (release == null) {
+                    if (manual) Toast.makeText(this, "You are on the latest version.", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Update available: ${release.version}")
+                    .setMessage(release.notes.ifBlank { "A newer version is available on GitHub." })
+                    .setPositiveButton("Update") { _, _ -> downloadAndInstall(release) }
+                    .setNegativeButton("Later", null)
+                    .show()
+            }
+        }.start()
+    }
+
+    private fun downloadAndInstall(release: com.alphasteg.pro.update.UpdateManager.Release) {
+        val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100; isIndeterminate = false
+            val p = dp(24); setPadding(p, p, p, p)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Downloading ${release.version}")
+            .setView(bar)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+        Thread {
+            val apk = com.alphasteg.pro.update.UpdateManager.download(release.apkUrl) { pct ->
+                runOnUiThread { bar.progress = pct }
+            }
+            runOnUiThread {
+                runCatching { dialog.dismiss() }
+                if (apk == null) {
+                    Toast.makeText(this, "Download failed.", Toast.LENGTH_LONG).show()
+                } else {
+                    runCatching { com.alphasteg.pro.update.UpdateManager.install(this, apk) }
+                        .onFailure { Toast.makeText(this, "Install error: ${it.message}", Toast.LENGTH_LONG).show() }
+                }
+            }
+        }.start()
     }
 
     private fun aliasComponent(name: String) =
