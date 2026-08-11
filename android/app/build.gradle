@@ -82,6 +82,9 @@ dependencies {
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.biometric:biometric:1.1.0'
+    // Security keys (FIDO2 hmac-secret over USB-C and NFC) for the recovery keyslot.
+    implementation 'com.yubico.yubikit:android:2.9.0'
+    implementation 'com.yubico.yubikit:fido:2.9.0'
     testImplementation 'junit:junit:4.13.2'
     // Android stubs org.json in unit tests; use the real implementation there.
     testImplementation 'org.json:json:20231013'
