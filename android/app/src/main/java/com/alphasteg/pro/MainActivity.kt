@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity() {
     private var vaultIndex: VaultVolume.Index = VaultVolume.Index(0, emptyList())
     private var vaultCwd: String = "/"
     private var vaultDirty = false
+    private var devSeedDone = false
 
     // Cascade password for vaulted files: ONLY the user's code, passed by the
     // lock screen or calculator. No default key ever, so nothing is encrypted
@@ -951,6 +952,15 @@ class MainActivity : AppCompatActivity() {
                 if (VaultFs.allFolders(index).none { it == vaultCwd }) vaultCwd = "/"
                 renderCurrentFolder()
                 updateStorageBar(poolBytes, trackCount)
+
+                // Dev flavor: seed a sample vault once, when carriers exist but the
+                // vault is empty, so the screens have content for screenshots.
+                if (BuildConfig.IS_DEV && !devSeedDone && currentPool.isNotEmpty() && index.entries.isEmpty()) {
+                    devSeedDone = true
+                    com.alphasteg.pro.dev.DevSeed.maybeSeed(this, vaultVolume, currentPool, vaultPassword) {
+                        runOnUiThread { refreshVaultUi() }
+                    }
+                }
             }
         }.start()
     }

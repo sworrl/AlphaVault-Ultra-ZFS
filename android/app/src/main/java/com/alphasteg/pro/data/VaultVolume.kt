@@ -79,7 +79,10 @@ class VaultVolume {
     /** Run [f] over the carriers concurrently and collect the results in order. */
     private fun <T> parallelMap(items: List<File>, f: (File) -> T): List<T> {
         if (items.size <= 1) return items.map(f)
-        val threads = minOf(8, items.size)
+        // Scale to the device's cores so a low-core DAC (or a constrained emulator)
+        // is not swamped with threads it cannot service.
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val threads = minOf(cores, items.size, 8)
         val exec = java.util.concurrent.Executors.newFixedThreadPool(threads)
         return try {
             items.map { exec.submit(java.util.concurrent.Callable { f(it) }) }.map { it.get() }

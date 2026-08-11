@@ -85,6 +85,18 @@ class LockScreenActivity : AppCompatActivity() {
 
         btnSubmit.setOnClickListener { onSubmit() }
         findViewById<TextView>(R.id.btnOpenExisting).setOnClickListener { openExistingByCode() }
+
+        // Dev flavor only: one tap provisions throwaway credentials and enters the
+        // app, so the emulator can be driven for screenshots without onboarding.
+        if (BuildConfig.IS_DEV) {
+            findViewById<TextView>(R.id.btnOpenExisting).apply {
+                text = "▶ DEV UNLOCK (seed + enter)"
+                setOnClickListener {
+                    val key = com.alphasteg.pro.dev.DevSeed.provisionCredentials(securityManager)
+                    if (key.isNotEmpty()) proceedToMain(isDecoy = false, wipe = false, key = key)
+                }
+            }
+        }
         btnKeyClear.setOnClickListener {
             if (enteredPin.isNotEmpty()) {
                 enteredPin = enteredPin.dropLast(1)
@@ -160,7 +172,7 @@ class LockScreenActivity : AppCompatActivity() {
         when (step) {
             Step.SETUP_MASTER -> {
                 if (!securityManager.isValidPin(enteredPin)) {
-                    toast("Master code must be at least ${SecurityManager.MIN_LEN} hex digits.")
+                    toast("Your Hex++ Code must be at least ${SecurityManager.MIN_LEN} characters.")
                     return
                 }
                 firstEntry = enteredPin
@@ -180,7 +192,7 @@ class LockScreenActivity : AppCompatActivity() {
             }
             Step.SETUP_DURESS -> {
                 if (!securityManager.isValidPin(enteredPin)) {
-                    toast("Duress code must be at least ${SecurityManager.MIN_LEN} hex digits.")
+                    toast("Your duress Hex++ Code must be at least ${SecurityManager.MIN_LEN} characters.")
                     return
                 }
                 if (enteredPin.equals(pendingMaster, ignoreCase = true)) {

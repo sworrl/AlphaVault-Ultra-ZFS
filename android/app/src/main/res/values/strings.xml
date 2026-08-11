@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AlphaVault Ultra</string>
+    <!-- app_name is provided per build flavor (dev vs prod) in build.gradle. -->
     <string name="calc_app_name">Calculator</string>
     <string name="brand_title">ALPHAVAULT ULTRA</string>
 
@@ -48,8 +48,8 @@
     <!-- Lock screen -->
     <string name="lock_title_locked">ALPHAVAULT ULTRA // LOCKED</string>
     <string name="lock_title_onboarding">ALPHAVAULT // ONBOARDING</string>
-    <string name="lock_status_pin_only">Enter your hex master code (0-9, a-f)</string>
-    <string name="lock_status_setup_master">Set a master code: at least 8 characters (0-9, a-f, symbols)</string>
+    <string name="lock_status_pin_only">Please enter your Hex++ Code (0-9, a-f, symbols)</string>
+    <string name="lock_status_setup_master">Set your Hex++ Code: at least 8 characters (0-9, a-f, symbols)</string>
     <string name="lock_status_confirm_master">Re-enter your master code to confirm</string>
     <string name="lock_status_setup_duress">Now set a DIFFERENT duress code. Entering it later wipes the vault.</string>
     <string name="lock_status_confirm_duress">Re-enter your duress code to confirm</string>

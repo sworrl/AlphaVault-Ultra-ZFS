@@ -18,9 +18,30 @@ android {
 
         // Screenshots/screen recording are blocked by FLAG_SECURE unless this is
         // set. Build with -PallowScreenshots to produce a capturable build for
-        // docs; normal builds stay secure.
+        // docs; normal builds stay secure. The dev flavor forces it on.
         buildConfigField "boolean", "ALLOW_SCREENSHOTS",
             (project.hasProperty("allowScreenshots") ? "true" : "false")
+        // Dev-only behavior (seed fake data, screenshots). Off for prod.
+        buildConfigField "boolean", "IS_DEV", "false"
+    }
+
+    // Two copies from one source: `dev` for the emulator (installs alongside the
+    // real app, screenshots enabled, seeds fake data for media capture) and
+    // `prod`, the locked build that goes on a real device.
+    flavorDimensions "distribution"
+    productFlavors {
+        prod {
+            dimension "distribution"
+            resValue "string", "app_name", "AlphaVault Ultra"
+        }
+        dev {
+            dimension "distribution"
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+            resValue "string", "app_name", "AlphaVault Dev"
+            buildConfigField "boolean", "ALLOW_SCREENSHOTS", "true"
+            buildConfigField "boolean", "IS_DEV", "true"
+        }
     }
 
     buildTypes {
@@ -38,7 +59,7 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
-            outputFileName = "AlphaVault-Ultra-ZFS.apk"
+            outputFileName = "AlphaVault-Ultra-ZFS-${variant.flavorName}-${variant.buildType.name}.apk"
         }
     }
 
