@@ -35,7 +35,7 @@ object VaultCodec {
         val crcOk: Boolean
     )
 
-    private const val CHUNK_HEADER = 4 + FILE_ID_LEN + 2 + 2 + 4 + 4 + 1 + 4
+    const val CHUNK_HEADER = 4 + FILE_ID_LEN + 2 + 2 + 4 + 4 + 1 + 4
 
     fun encodeChunk(
         fileId: String, index: Int, count: Int,

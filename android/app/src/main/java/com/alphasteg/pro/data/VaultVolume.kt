@@ -58,9 +58,17 @@ class VaultVolume {
     // ---------- index ----------
 
     fun loadIndex(pool: List<File>, password: String): Index {
-        // Scan carriers in parallel (I/O bound). Each yields its best decryptable
-        // index replica; the global winner is the highest generation.
-        val candidates = parallelMap(pool) { f ->
+        // Fast path: the index is replicated to a deterministic set of carriers, so
+        // read only those on unlock instead of scanning the whole library. Falls
+        // back to a full scan when the pool has changed since the last save (the
+        // replica set moved) or on first run.
+        scanForIndex(spreadCarriers(REPLICAS, pool), password)?.let { return it }
+        return scanForIndex(pool, password) ?: Index(0, emptyList())
+    }
+
+    /** Highest-generation index this password can decrypt among [carriers], or null. */
+    private fun scanForIndex(carriers: List<File>, password: String): Index? {
+        val candidates = parallelMap(carriers) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap null
             var best: Pair<Long, Index>? = null
             for (payload in extractOrEmpty(f)) {
@@ -73,7 +81,18 @@ class VaultVolume {
             }
             best
         }
-        return candidates.filterNotNull().maxByOrNull { it.first }?.second ?: Index(0, emptyList())
+        return candidates.filterNotNull().maxByOrNull { it.first }?.second
+    }
+
+    /**
+     * Bytes stored in the carriers, estimated from the index without scanning the
+     * library, for the stats line. Each file's chunks are chunkCount * chunkSize
+     * plus a small per-chunk frame; the replicated index adds a little more.
+     */
+    fun estimatedStoredBytes(index: Index): Long {
+        val chunkFrame = VaultCodec.CHUNK_HEADER.toLong()
+        val fileBytes = index.entries.sumOf { it.chunkCount.toLong() * (it.chunkSize.toLong() + chunkFrame) }
+        return fileBytes
     }
 
     /** Run [f] over the carriers concurrently and collect the results in order. */

@@ -939,9 +939,12 @@ class MainActivity : AppCompatActivity() {
         Thread {
             // Persist pending folder/move edits before reloading so they survive.
             if (pending != null) runCatching { vaultVolume.commitIndex(pending, pool, vaultPassword) }
+            // Fast path: reads only the index-carrying carriers, and the size stat
+            // is estimated from the index, so the vault list shows right after
+            // unlock instead of waiting on a whole-library scan.
             val index = runCatching { vaultVolume.loadIndex(pool, vaultPassword) }
                 .getOrDefault(VaultVolume.Index(0, emptyList()))
-            val stored = runCatching { vaultVolume.usageBytes(pool, vaultPassword) }.getOrDefault(0L)
+            val stored = vaultVolume.estimatedStoredBytes(index)
             runOnUiThread {
                 vaultIndex = index
                 vaultDirty = false
