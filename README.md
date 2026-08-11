@@ -212,6 +212,40 @@ for every pair of lost data chunks and checks the bytes come back exactly.
   library by entering its code ("Open an existing vault by code" on the lock
   screen), without local onboarding, so no verifier is stored on the phone.
 
+## Hiding methods
+
+A file's contents are always encrypted the same way (the cascade above). What
+differs is *where the encrypted bytes are put in the FLAC*. You choose per library
+under Options → Hiding method.
+
+**Hidden in audio (LSB) — the default, and the private one.** The encrypted bytes
+are written into the least-significant bits of the audio samples, the way
+bennjordan's AlphaSteg `lsb` method works, then the track is re-encoded to FLAC
+(lossless, so the bits survive). It is hardened past the upstream: there is no
+`[0xAF,0x55]` marker. The embedding key is derived from your code and a hash of the
+samples' upper 15 bits — bits that never change when the LSB is written and are
+preserved by lossless FLAC — so nothing is stored to find. That key seeds which
+sample LSBs carry bits and in what order, plus a keyed presence marker. Without the
+code the bits, their order, and the length are all unknown, so a metadata scan or a
+signature scan sees only noise. The costs: it changes the audio inaudibly (the
+"audio byte-identical" property is gone), it decodes and re-encodes each carrier
+(fine on the phone, which does the work), and a dedicated audio-steganalysis lab
+can still detect LSB anomalies. It hides the vault's presence from normal
+inspection; it is not proof against a determined forensic examination.
+
+**Metadata blocks — faster, but less secure because the presence is visible.** The
+encrypted chunks go into FLAC `APPLICATION` metadata blocks. The audio stays
+byte-identical and it is fast and light, but any FLAC parser (`metaflac`) can see
+that non-standard blocks exist and read their coarse structure (how many, how big),
+even though it cannot read the contents. Use this when you care about the audio
+being untouched and not about hiding that the vault exists. The app marks this
+method **"less secure — visible"** wherever it is selected.
+
+Either way, the app can tell you which carriers *it* has touched with the metadata
+method (any FLAC tool can), but the LSB method is deliberately undetectable without
+your code — the app only knows its own LSB carriers from the encrypted index, not
+by inspecting a random FLAC.
+
 ## Security notes
 
 - Confidentiality rests only on the user's code. Files and the index are

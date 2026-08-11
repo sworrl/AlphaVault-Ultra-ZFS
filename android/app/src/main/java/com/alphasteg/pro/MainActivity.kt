@@ -298,8 +298,30 @@ class MainActivity : AppCompatActivity() {
                     1 -> setDisguised(isChecked)
                 }
             }
-            .setNeutralButton("Check for updates") { _, _ -> checkForUpdate(manual = true) }
+            .setNeutralButton("Hiding method…") { _, _ -> showCarrierMethodDialog() }
             .setPositiveButton("Done", null)
+            .show()
+    }
+
+    /** Choose how new files are hidden in the FLACs, with the trade-off spelled out. */
+    private fun showCarrierMethodDialog() {
+        val methods = com.alphasteg.pro.data.CarrierMethod.entries.toTypedArray()
+        val current = appSettings.carrierMethod
+        val labels = methods.map { m ->
+            val detail = if (m.hidden)
+                "Hidden in the audio itself. A metadata scan of the FLAC finds nothing; the bits are keyed to your code and read as noise. Modifies the audio inaudibly and re-encodes it."
+            else
+                "Stored in FLAC metadata blocks. The audio stays byte-identical and it is fast, but any FLAC parser can see the blocks exist — the vault's presence is detectable. Content stays encrypted."
+            "${m.label}\n$detail"
+        }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("How to hide data in the FLACs")
+            .setSingleChoiceItems(labels, methods.indexOf(current)) { d, which ->
+                appSettings.carrierMethod = methods[which]
+                d.dismiss()
+                Toast.makeText(this, "New files will use: ${methods[which].label}", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
