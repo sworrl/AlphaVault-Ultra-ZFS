@@ -206,6 +206,7 @@ class MainActivity : AppCompatActivity() {
 
         library = VaultLibrary(this)
         appSettings = com.alphasteg.pro.data.AppSettings(this)
+        vaultVolume.carrierMethod = appSettings.carrierMethod
 
         findViewById<TextView>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
         findViewById<TextView>(R.id.tvVaultSort).apply {
@@ -319,6 +320,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("How to hide data in the FLACs")
             .setSingleChoiceItems(labels, methods.indexOf(current)) { d, which ->
                 appSettings.carrierMethod = methods[which]
+                vaultVolume.carrierMethod = methods[which]
                 d.dismiss()
                 Toast.makeText(this, "New files will use: ${methods[which].label}", Toast.LENGTH_LONG).show()
             }

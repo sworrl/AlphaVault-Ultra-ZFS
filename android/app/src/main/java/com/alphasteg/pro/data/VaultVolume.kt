@@ -55,6 +55,19 @@ class VaultVolume {
 
     data class ScrubReport(val filesChecked: Int, val chunksHealed: Int, val filesUnrecoverable: List<String>)
 
+    /**
+     * How new payloads are hidden. METADATA (default) keeps the tested, fast path;
+     * LSB hides in the audio itself. It is per-library: set it before the first
+     * vault and do not switch it with data present, because a carrier written one
+     * way is not read the other way.
+     */
+    var carrierMethod: com.alphasteg.pro.data.CarrierMethod = com.alphasteg.pro.data.CarrierMethod.METADATA
+
+    private fun engine(password: String): com.alphasteg.pro.engine.CarrierEngine =
+        if (carrierMethod == com.alphasteg.pro.data.CarrierMethod.LSB)
+            com.alphasteg.pro.engine.LsbCarrierEngine(password)
+        else com.alphasteg.pro.engine.MetadataCarrierEngine
+
     // ---------- index ----------
 
     fun loadIndex(pool: List<File>, password: String): Index {
@@ -71,7 +84,7 @@ class VaultVolume {
         val candidates = parallelMap(carriers) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap null
             var best: Pair<Long, Index>? = null
-            for (payload in extractOrEmpty(f)) {
+            for (payload in extractOrEmpty(f, password)) {
                 val blob = VaultCodec.decodeIndex(payload) ?: continue
                 if (!blob.crcOk) continue
                 if (best != null && blob.generation <= best!!.first) continue
@@ -120,10 +133,11 @@ class VaultVolume {
 
         // Drop only THIS passcode's stale index replicas, keeping other compartments.
         progress.update(base, total, "Updating vault index…")
+        val eng = engine(password)
         for (f in pool) {
             if (!FlacCarrierEngine.isFlacFile(f)) continue
             runCatching {
-                FlacCarrierEngine.removeMatchingInFile(f) { p ->
+                eng.removeMatching(f) { p ->
                     val blob = VaultCodec.decodeIndex(p)
                     blob != null && blob.crcOk &&
                         runCatching { CryptoEngine.decryptPayload(blob.encBody, password) }.isSuccess
@@ -132,7 +146,7 @@ class VaultVolume {
         }
         for (carrier in spreadCarriers(REPLICAS, pool)) {
             if (!FlacCarrierEngine.isFlacFile(carrier)) continue
-            runCatching { FlacCarrierEngine.embedIntoFile(carrier, payload) }
+            runCatching { eng.embed(carrier, payload) }
         }
     }
 
@@ -150,7 +164,14 @@ class VaultVolume {
         val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(encrypted, DATA_CHUNKS, true)
         val fileId = raid.fileId
 
+        // LSB holds one payload per carrier, so each chunk needs its own carrier.
+        if (carrierMethod == com.alphasteg.pro.data.CarrierMethod.LSB) {
+            require(pool.count { FlacCarrierEngine.isFlacFile(it) } >= raid.chunks.size) {
+                "The hidden-audio (LSB) method needs at least ${raid.chunks.size} FLAC tracks for this file."
+            }
+        }
         val carriers = assignChunkCarriers(raid.chunks, pool)
+        val eng = engine(password)
         // Total steps ~ number of chunk embeds + an index-save step.
         val total = raid.chunks.size + 1
         raid.chunks.forEachIndexed { i, chunk ->
@@ -160,7 +181,7 @@ class VaultVolume {
                     fileId, chunk.chunkIndex, raid.chunks.size,
                     raid.chunkSize, raid.totalLength, DATA_CHUNKS, chunk.data
                 )
-                runCatching { FlacCarrierEngine.embedIntoFile(carrier, payload) }
+                runCatching { eng.embed(carrier, payload) }
             }
             progress.update(i + 1, total, "Hiding chunk ${i + 1} of ${raid.chunks.size} in ${carrier.name}…")
         }
@@ -187,10 +208,10 @@ class VaultVolume {
     fun commitIndex(index: Index, pool: List<File>, password: String, progress: Progress = noProgress) =
         saveIndex(index, pool, password, progress, 0, 1)
 
-    private fun gatherChunks(fileId: String, expectedCount: Int, pool: List<File>): Map<Int, ByteArray> {
+    private fun gatherChunks(fileId: String, expectedCount: Int, pool: List<File>, password: String): Map<Int, ByteArray> {
         val perFile = parallelMap(pool) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap emptyList<Pair<Int, ByteArray>>()
-            extractOrEmpty(f).mapNotNull { payload ->
+            extractOrEmpty(f, password).mapNotNull { payload ->
                 val c = VaultCodec.decodeChunk(payload) ?: return@mapNotNull null
                 if (c.fileId != fileId || !c.crcOk) null else c.index to c.data
             }
@@ -205,7 +226,7 @@ class VaultVolume {
         val entry = loadIndex(pool, password).entries.firstOrNull { it.fileId == fileId }
             ?: throw IllegalStateException("Vaulted file not found in volume index.")
         progress.update(1, 3, "Gathering chunks from carriers…")
-        val chunks = gatherChunks(fileId, entry.chunkCount, pool)
+        val chunks = gatherChunks(fileId, entry.chunkCount, pool, password)
         progress.update(2, 3, "Reconstructing and decrypting…")
         val encrypted = RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
         val plain = CryptoEngine.decryptPayload(encrypted, password)
@@ -218,7 +239,7 @@ class VaultVolume {
         var healed = 0
         val unrecoverable = ArrayList<String>()
         for (entry in index.entries) {
-            val chunks = gatherChunks(entry.fileId, entry.chunkCount, pool)
+            val chunks = gatherChunks(entry.fileId, entry.chunkCount, pool, password)
             if (chunks.size >= entry.chunkCount) continue
             val rebuilt = runCatching {
                 RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
@@ -229,15 +250,16 @@ class VaultVolume {
             raid.chunks.forEachIndexed { i, chunk ->
                 val carrier = carriers[i]
                 if (!FlacCarrierEngine.isFlacFile(carrier)) return@forEachIndexed
+                val eng = engine(password)
                 runCatching {
-                    FlacCarrierEngine.removeMatchingInFile(carrier) { p ->
+                    eng.removeMatching(carrier) { p ->
                         VaultCodec.decodeChunk(p)?.let { it.fileId == entry.fileId && it.index == chunk.chunkIndex } == true
                     }
                     val payload = VaultCodec.encodeChunk(
                         entry.fileId, chunk.chunkIndex, raid.chunks.size,
                         raid.chunkSize, raid.totalLength, entry.numData, chunk.data
                     )
-                    FlacCarrierEngine.embedIntoFile(carrier, payload)
+                    eng.embed(carrier, payload)
                 }
             }
             healed++
@@ -268,10 +290,11 @@ class VaultVolume {
     }
 
     fun delete(fileId: String, password: String, pool: List<File>) {
+        val eng = engine(password)
         for (f in pool) {
             if (!FlacCarrierEngine.isFlacFile(f)) continue
             runCatching {
-                FlacCarrierEngine.removeMatchingInFile(f) { p -> VaultCodec.decodeChunk(p)?.fileId == fileId }
+                eng.removeMatching(f) { p -> VaultCodec.decodeChunk(p)?.fileId == fileId }
             }
         }
         val current = loadIndex(pool, password)
@@ -292,7 +315,7 @@ class VaultVolume {
     fun usageBytes(pool: List<File>, password: String): Long =
         parallelMap(pool) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) 0L
-            else extractOrEmpty(f).sumOf { it.size.toLong() }
+            else extractOrEmpty(f, password).sumOf { it.size.toLong() }
         }.sum()
 
     // ---------- carrier selection ----------
@@ -395,8 +418,8 @@ class VaultVolume {
         return Index(generation, entries, folders)
     }
 
-    private fun extractOrEmpty(file: File): List<ByteArray> =
-        runCatching { FlacCarrierEngine.extractAllFromFile(file) }.getOrDefault(emptyList())
+    private fun extractOrEmpty(file: File, password: String): List<ByteArray> =
+        runCatching { engine(password).extractAll(file) }.getOrDefault(emptyList())
 
     companion object {
         const val DATA_CHUNKS = 4
