@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var switchServer: MaterialSwitch
     private lateinit var tvServerUrl: TextView
+    private var webServer: com.alphasteg.pro.net.VaultWebServer? = null
 
     private var isDecoyMode = false
     private var pendingWipe = false
@@ -714,20 +715,57 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupWebSyncServer() {
         switchServer.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                val serviceIntent = Intent(this, VaultService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
-                }
-                tvServerUrl.text = getString(R.string.server_status_running)
-            } else {
-                val serviceIntent = Intent(this, VaultService::class.java)
-                stopService(serviceIntent)
-                tvServerUrl.text = getString(R.string.server_status_stopped)
-            }
+            if (isChecked) startNetworkDrive() else stopNetworkDrive()
         }
+    }
+
+    /**
+     * Expose the unlocked vault as a read-only network drive over Wi-Fi. It is
+     * token-gated and stops when the vault locks, so a device on the same network
+     * cannot reach any file without the shown credentials.
+     */
+    private fun startNetworkDrive() {
+        if (isDecoyMode || vaultPassword.isBlank()) {
+            switchServer.isChecked = false
+            Toast.makeText(this, "Unlock the vault first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val ip = wifiIpv4()
+        if (ip == null) {
+            switchServer.isChecked = false
+            Toast.makeText(this, "Join a Wi-Fi network first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val token = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+        val server = com.alphasteg.pro.net.VaultWebServer(vaultVolume, { currentPool }, vaultPassword, token)
+        runCatching { server.start() }
+            .onSuccess {
+                webServer = server
+                val svc = Intent(this, VaultService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
+                tvServerUrl.text = "Mount / browse (read-only):\nhttp://$ip:${server.port}/\nUser: vault    Password: $token\n\nStops when the vault locks."
+            }
+            .onFailure {
+                switchServer.isChecked = false
+                Toast.makeText(this, "Could not start server: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+    }
+
+    private fun stopNetworkDrive() {
+        webServer?.stop(); webServer = null
+        runCatching { stopService(Intent(this, VaultService::class.java)) }
+        tvServerUrl.text = getString(R.string.server_status_stopped)
+    }
+
+    /** First non-loopback IPv4 address, for the mount URL. No extra permission needed. */
+    private fun wifiIpv4(): String? {
+        return runCatching {
+            java.net.NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }
+                .firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address }
+                ?.hostAddress
+        }.getOrNull()
     }
 
     /** After unlock and a pool sync, offer to move or copy any shared files into the vault. */
@@ -925,6 +963,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        // The network drive must never outlive an on-screen, unlocked session.
+        if (webServer != null) {
+            runOnUiThread { if (::switchServer.isInitialized) switchServer.isChecked = false }
+            stopNetworkDrive()
+        }
         // Background or lock: flush the mounted index once, like syncing before unmount.
         if (vaultDirty && !isDecoyMode) {
             val pool = currentPool
