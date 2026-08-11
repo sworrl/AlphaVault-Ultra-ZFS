@@ -300,9 +300,64 @@ class MainActivity : AppCompatActivity() {
                     1 -> setDisguised(isChecked)
                 }
             }
-            .setNeutralButton("Hiding method…") { _, _ -> showCarrierMethodDialog() }
+            .setNeutralButton("Advanced…") { _, _ -> showAdvancedOptions() }
             .setPositiveButton("Done", null)
             .show()
+    }
+
+    private fun showAdvancedOptions() {
+        val items = arrayOf("Hiding method", "Test security key (FIDO2)", "Check for updates")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Advanced")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showCarrierMethodDialog()
+                    1 -> testSecurityKey()
+                    2 -> checkForUpdate(manual = true)
+                }
+            }
+            .show()
+    }
+
+    /** Live test of the FIDO2 hmac-secret keyslot: enroll, then re-derive and confirm a stable KEK. */
+    private fun testSecurityKey() {
+        val pinInput = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "Security key FIDO2 PIN"
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Test security key")
+            .setMessage("Enter the key's FIDO2 PIN, tap Start, then insert the YubiKey into the phone's USB-C port (or hold it to the back for NFC).")
+            .setView(pinInput)
+            .setPositiveButton("Start") { _, _ -> runFidoTest(pinInput.text.toString().toCharArray()) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun runFidoTest(pin: CharArray) {
+        val mgr = com.yubico.yubikit.android.YubiKitManager(this)
+        Toast.makeText(this, "Insert or tap your security key…", Toast.LENGTH_LONG).show()
+        mgr.startUsbDiscovery(com.yubico.yubikit.android.transport.usb.UsbConfiguration()) { device ->
+            com.yubico.yubikit.fido.ctap.Ctap2Session.create(device) { result ->
+                try {
+                    val session = result.value
+                    val salt = ByteArray(32) { (it * 7).toByte() } // fixed test salt
+                    val enrollment = com.alphasteg.pro.security.Fido2Kek.enroll(session, pin, salt)
+                    val again = com.alphasteg.pro.security.Fido2Kek.derive(session, pin, enrollment.credentialId, salt)
+                    val stable = enrollment.kek.contentEquals(again)
+                    val hex = enrollment.kek.take(6).joinToString("") { "%02x".format(it) }
+                    android.util.Log.i("AlphaVaultFIDO", "enroll ok kek=$hex stable=$stable credId=${enrollment.credentialId.size}B")
+                    runOnUiThread {
+                        Toast.makeText(this, if (stable) "Security key OK — KEK $hex… (stable)" else "KEK not stable!", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("AlphaVaultFIDO", "fido test failed", e)
+                    runOnUiThread { Toast.makeText(this, "FIDO error: ${e.message}", Toast.LENGTH_LONG).show() }
+                } finally {
+                    runOnUiThread { runCatching { mgr.stopUsbDiscovery() } }
+                }
+            }
+        }
     }
 
     /** Choose how new files are hidden in the FLACs, with the trade-off spelled out. */
