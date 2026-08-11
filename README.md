@@ -12,17 +12,23 @@ Android app under `android/` is new and does not use the server.
 
 ## Screenshots
 
-Captured on a Pixel 10 Pro XL (Android 14).
+The vault and disk screens below are the dev build running on an emulator with a
+synthetic library, so no real data is shown. The lock screen is a device capture.
 
-| Lock screen | Disks | Vault |
+| Onboarding | Vault (folders) | In a folder |
 |---|---|---|
-| ![Lock screen with per-character colored keypad](docs/screenshots/01-lock.png) | ![Disks view: RAID-Z2 pool, partition bar, and a treemap of the FLAC carriers](docs/screenshots/03-disks.png) | ![Vault view: treemap and file cards](docs/screenshots/02-vault.png) |
+| ![Hex++ keypad, each character its own color](docs/screenshots/dev-01-onboarding.png) | ![Vault root showing Documents and Photos folders](docs/screenshots/dev-03-vault-root.png) | ![Inside a folder: breadcrumb, files with chunk counts, and a treemap](docs/screenshots/dev-04-folder.png) |
 
-Lock screen: the hex-plus-symbol keypad, each character its own color, with "open
-an existing vault by code" below the keypad. Disks: the whole-library RAID-Z2 pool
-(188 carriers, 7.93 GB), a GParted-style partition bar for device/pool/vault/free,
-and a WinDirStat-style treemap of the carriers colored by album. Vault: a treemap
-of the hidden files over their cards, each showing size and chunk count.
+| Disks | Lock screen |
+|---|---|
+| ![RAID-Z2 pool, partition bar, and a treemap of the FLAC carriers by album](docs/screenshots/dev-02-disks.png) | ![Locked hex-plus-symbol keypad with open-existing-vault link](docs/screenshots/01-lock.png) |
+
+Onboarding: the Hex++ keypad (0-9, a-f, and symbols), each character its own
+color. Vault: the library as a browsable filesystem, with folders you navigate by
+breadcrumb; opening one lists its files (size and chunk count) over a treemap of
+that folder. Disks: the whole-library RAID-Z2 pool, a GParted-style partition bar
+for device/pool/vault/free, and a WinDirStat-style treemap of the carriers colored
+by album.
 
 ## Status
 
