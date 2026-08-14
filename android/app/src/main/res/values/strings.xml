@@ -31,6 +31,7 @@
     <string name="vault_stats_guest">Guest session • %1$d FLAC tracks • nothing saved to this device</string>
 
     <!-- Guest / ephemeral library access -->
+    <string name="guest_pick_volume_title">Where is the library?</string>
     <string name="guest_pick_title">Choose a FLAC library</string>
     <string name="guest_pick_message">Pick the folder holding the tracks. It is read directly and never copied, registered, or remembered.</string>
     <string name="guest_pick_use">USE THIS FOLDER</string>

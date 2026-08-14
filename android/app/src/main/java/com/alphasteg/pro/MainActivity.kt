@@ -338,10 +338,9 @@ class MainActivity : AppCompatActivity() {
                     0 -> showCarrierMethodDialog()
                     // Point this session at a library we do not own, using the code
                     // already entered. Nothing about it is written down.
-                    1 -> showFolderPicker(
-                        Environment.getExternalStorageDirectory()
-                            ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-                    ) { folder -> useGuestLibrary(folder) }
+                    1 -> pickStorageVolume { root ->
+                        showFolderPicker(root) { folder -> useGuestLibrary(folder) }
+                    }
                     2 -> testSecurityKey()
                     3 -> checkForUpdate(manual = true)
                 }
@@ -599,9 +598,64 @@ class MainActivity : AppCompatActivity() {
         if (!hasAllFilesAccess() && !hasAudioPermission()) {
             requestAudioPermLauncher.launch(audioPermission())
         }
-        val start = Environment.getExternalStorageDirectory()
-            ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-        showFolderPicker(start) { folder -> useGuestLibrary(folder) }
+        pickStorageVolume { root -> showFolderPicker(root) { folder -> useGuestLibrary(folder) } }
+    }
+
+    /**
+     * Mounted volumes worth offering as a library root.
+     *
+     * Removable media is the interesting entry: a card pulled out of a DAP and put
+     * in a USB-C reader mounts as ordinary storage with real paths, so the vault
+     * engine reads it exactly as it reads internal storage. (A DAP connected
+     * directly over USB does not help — Android speaks MTP there, and has no MTP
+     * host stack.)
+     */
+    private fun storageRoots(): List<Pair<String, java.io.File>> {
+        val roots = LinkedHashMap<String, java.io.File>()
+        Environment.getExternalStorageDirectory()?.takeIf { it.canRead() }?.let {
+            roots["Internal storage"] = it
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val sm = getSystemService(android.os.storage.StorageManager::class.java)
+            for (volume in sm?.storageVolumes.orEmpty()) {
+                val dir = volume.directory ?: continue
+                if (!dir.canRead()) continue
+                val label = volume.getDescription(this) ?: dir.name
+                val name = if (volume.isRemovable) "$label (removable)" else label
+                if (!roots.containsValue(dir)) roots[name] = dir
+            }
+        }
+        // Media mounted after boot can be readable here even when the volume API
+        // does not describe it, so fall back to what is actually on the filesystem.
+        runCatching {
+            java.io.File("/storage").listFiles()?.forEach { f ->
+                if (f.isDirectory && f.canRead() && f.name != "emulated" && f.name != "self" &&
+                    !roots.containsValue(f)
+                ) {
+                    roots[f.name] = f
+                }
+            }
+        }
+        return roots.map { it.key to it.value }
+    }
+
+    /** Offer the mounted volumes, skipping the step when there is only one. */
+    private fun pickStorageVolume(onPick: (java.io.File) -> Unit) {
+        val roots = storageRoots()
+        if (roots.size <= 1) {
+            onPick(roots.firstOrNull()?.second ?: Environment.getExternalStorageDirectory())
+            return
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.guest_pick_volume_title)
+            .setItems(roots.map { "💾 ${it.first}" }.toTypedArray()) { _, which ->
+                onPick(roots[which].second)
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                if (isGuest && guestLibraryRoot == null) finish()
+            }
+            .setCancelable(false)
+            .show()
     }
 
     /**
