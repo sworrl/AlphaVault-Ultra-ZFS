@@ -31,6 +31,40 @@ object RaidVaultEngine {
         val fileId: String
     )
 
+    /** Baseline shape when the library is small: 4 data + 2 parity, mirrored. */
+    const val DEFAULT_DATA_CHUNKS = 4
+    private const val MIN_DATA_CHUNKS = 2      // RAID-Z2 needs at least two data chunks
+    private const val MAX_DATA_CHUNKS = 512    // bounds embed work on enormous libraries
+
+    /**
+     * How many data chunks to split a file into, given a pool of [poolSize] carriers.
+     *
+     * The vault is supposed to behave like a RAID array built from the whole music
+     * library rather than a handful of tracks, so the shape scales with the pool:
+     * aim to put data on at least [minCoverage] of the carriers. A file becomes
+     * `n` data chunks plus 2 parity chunks, and every chunk is mirrored to a hot
+     * spare, so it occupies `2 * (n + 2)` carriers; solving that against the target
+     * coverage is where the arithmetic below comes from.
+     *
+     * The result is clamped so it never asks for more carriers than exist, never
+     * drops below a usable RAID-Z2 shape, and never explodes into thousands of
+     * embeds on a very large library — past roughly 2000 tracks the coverage
+     * target yields to [MAX_DATA_CHUNKS].
+     */
+    fun dataChunksFor(poolSize: Int, minCoverage: Double = 0.5): Int {
+        if (poolSize <= 0) return DEFAULT_DATA_CHUNKS
+        val targetCarriers = Math.ceil(poolSize * minCoverage).toInt()
+        val fromCoverage = Math.ceil(targetCarriers / 2.0).toInt() - 2
+        val fitsPool = poolSize / 2 - 2
+        return fromCoverage
+            .coerceAtLeast(DEFAULT_DATA_CHUNKS)
+            .coerceAtMost(maxOf(MIN_DATA_CHUNKS, fitsPool))
+            .coerceAtMost(MAX_DATA_CHUNKS)
+    }
+
+    /** Carriers a file of [dataChunks] data chunks will occupy, hot spares included. */
+    fun carriersUsedFor(dataChunks: Int): Int = 2 * (dataChunks + 2)
+
     fun encodeRaidZ2WithHotSpares(
         fileBytes: ByteArray,
         numDataChunks: Int = 4,

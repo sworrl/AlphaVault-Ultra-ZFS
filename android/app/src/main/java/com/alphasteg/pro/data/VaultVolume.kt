@@ -161,7 +161,10 @@ class VaultVolume {
         progress.update(0, 100, "Encrypting ${name}…")
         val encrypted = CryptoEngine.encryptPayload(data, password)
         progress.update(5, 100, "Splitting into RAID chunks…")
-        val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(encrypted, DATA_CHUNKS, true)
+        // The array is sized from the library, not fixed, so data lands on at least
+        // half the carriers instead of always the same handful.
+        val dataChunks = RaidVaultEngine.dataChunksFor(pool.size)
+        val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(encrypted, dataChunks, true)
         val fileId = raid.fileId
 
         // LSB holds one payload per carrier, so each chunk needs its own carrier.
@@ -179,7 +182,7 @@ class VaultVolume {
             if (FlacCarrierEngine.isFlacFile(carrier)) {
                 val payload = VaultCodec.encodeChunk(
                     fileId, chunk.chunkIndex, raid.chunks.size,
-                    raid.chunkSize, raid.totalLength, DATA_CHUNKS, chunk.data
+                    raid.chunkSize, raid.totalLength, dataChunks, chunk.data
                 )
                 runCatching { eng.embed(carrier, payload) }
             }
@@ -188,7 +191,7 @@ class VaultVolume {
 
         val entry = Entry(
             fileId, name, data.size.toLong(), raid.chunks.size,
-            raid.chunkSize, raid.totalLength, DATA_CHUNKS, createdAt
+            raid.chunkSize, raid.totalLength, dataChunks, createdAt
         )
         val current = loadIndex(pool, password)
         saveIndex(
@@ -208,7 +211,12 @@ class VaultVolume {
     fun commitIndex(index: Index, pool: List<File>, password: String, progress: Progress = noProgress) =
         saveIndex(index, pool, password, progress, 0, 1)
 
-    private fun gatherChunks(fileId: String, expectedCount: Int, pool: List<File>, password: String): Map<Int, ByteArray> {
+    /**
+     * Collect whatever chunks of [fileId] the pool still holds. Missing ones are
+     * simply absent from the result; RAID reconstruction decides whether enough
+     * survived, which is why no expected count is needed here.
+     */
+    private fun gatherChunks(fileId: String, pool: List<File>, password: String): Map<Int, ByteArray> {
         val perFile = parallelMap(pool) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap emptyList<Pair<Int, ByteArray>>()
             extractOrEmpty(f, password).mapNotNull { payload ->
@@ -223,15 +231,43 @@ class VaultVolume {
 
     @JvmOverloads
     fun restore(fileId: String, password: String, pool: List<File>, progress: Progress = noProgress): Pair<String, ByteArray> {
+        val out = java.io.ByteArrayOutputStream()
+        val name = restoreTo(fileId, password, pool, out, progress)
+        return name to out.toByteArray()
+    }
+
+    /**
+     * Restore a vaulted file straight into [sink], returning its name.
+     *
+     * Prefer this whenever the plaintext is headed somewhere other than memory —
+     * an export to disk, a socket serving the network drive. The chunk map is
+     * released before decryption starts and the cascade is decrypted a frame at a
+     * time, so a large file is never held in full more than once. [restore] is the
+     * same path with a memory sink, for callers that genuinely need the bytes.
+     */
+    @JvmOverloads
+    fun restoreTo(
+        fileId: String,
+        password: String,
+        pool: List<File>,
+        sink: java.io.OutputStream,
+        progress: Progress = noProgress
+    ): String {
         val entry = loadIndex(pool, password).entries.firstOrNull { it.fileId == fileId }
             ?: throw IllegalStateException("Vaulted file not found in volume index.")
         progress.update(1, 3, "Gathering chunks from carriers…")
-        val chunks = gatherChunks(fileId, entry.chunkCount, pool, password)
-        progress.update(2, 3, "Reconstructing and decrypting…")
-        val encrypted = RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
-        val plain = CryptoEngine.decryptPayload(encrypted, password)
+        // The chunk map is scoped to this block so it becomes unreachable the moment
+        // the blob is assembled: holding both at once is what decides whether a
+        // large file restores at all on a small-heap device.
+        val encrypted = run {
+            val chunks = gatherChunks(fileId, pool, password)
+            progress.update(2, 3, "Reconstructing and decrypting…")
+            RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
+        }
+        CryptoEngine.decryptTo(encrypted, password, sink)
+        sink.flush()
         progress.update(3, 3, "Done.")
-        return entry.name to plain
+        return entry.name
     }
 
     fun scrub(pool: List<File>, password: String): ScrubReport {
@@ -239,7 +275,7 @@ class VaultVolume {
         var healed = 0
         val unrecoverable = ArrayList<String>()
         for (entry in index.entries) {
-            val chunks = gatherChunks(entry.fileId, entry.chunkCount, pool, password)
+            val chunks = gatherChunks(entry.fileId, pool, password)
             if (chunks.size >= entry.chunkCount) continue
             val rebuilt = runCatching {
                 RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
@@ -422,7 +458,8 @@ class VaultVolume {
         runCatching { engine(password).extractAll(file) }.getOrDefault(emptyList())
 
     companion object {
-        const val DATA_CHUNKS = 4
+        // The data-chunk count is no longer fixed; it scales with the pool via
+        // RaidVaultEngine.dataChunksFor, and each entry records the value it used.
         const val REPLICAS = 4
     }
 }
