@@ -72,13 +72,17 @@ object RaidVaultEngine {
     ): RaidZ2Result {
         val totalLen = fileBytes.size
         val chunkSize = maxOf(1, (totalLen + numDataChunks - 1) / numDataChunks)
-        val paddedLen = chunkSize * numDataChunks
 
-        val padded = ByteArray(paddedLen)
-        System.arraycopy(fileBytes, 0, padded, 0, totalLen)
-
+        // Slice straight out of fileBytes. Materialising a zero-padded copy of the
+        // whole payload first would add another full-size array to peak memory,
+        // which on a small-heap device is the difference between vaulting a file
+        // and running out. Only the tail chunk carries padding.
         val dataChunks = Array(numDataChunks) { i ->
-            padded.copyOfRange(i * chunkSize, (i + 1) * chunkSize)
+            val start = i * chunkSize
+            val take = (totalLen - start).coerceIn(0, chunkSize)
+            ByteArray(chunkSize).also {
+                if (take > 0) System.arraycopy(fileBytes, start, it, 0, take)
+            }
         }
 
         val parityP = computeP(dataChunks, chunkSize)
@@ -100,7 +104,13 @@ object RaidVaultEngine {
                         chunkIndex = primaryCount + i,
                         isParity = orig.isParity,
                         isHotSpare = true,
-                        data = orig.data.copyOf()
+                        // A hot spare is byte-identical to what it mirrors, and chunk
+                        // data is only ever read from here on — each chunk is copied
+                        // into a carrier payload, never modified in place. Sharing the
+                        // array instead of duplicating it halves the memory this
+                        // function needs. Anything that starts mutating chunk data
+                        // must copy first.
+                        data = orig.data
                     )
                 )
             }
@@ -130,6 +140,34 @@ object RaidVaultEngine {
      * is taken from its primary or its hot-spare mirror; up to two data chunks
      * missing from BOTH are rebuilt from the P and Q parity by real RS recovery.
      */
+    /**
+     * Read the payload without rebuilding it, when every data chunk survived.
+     *
+     * In the ordinary case nothing has been lost and the payload is simply the
+     * data chunks in order — parity is never consulted. Joining them into one
+     * array would double peak memory for no benefit, so this hands back a view
+     * over the chunks as they already sit in memory.
+     *
+     * Returns null when a data chunk is missing, meaning parity repair is needed
+     * and the caller should fall back to [reconstructRaidZ2].
+     */
+    fun sourceIfIntact(
+        availableChunks: Map<Int, ByteArray>,
+        totalLen: Int,
+        chunkSize: Int,
+        numDataChunks: Int = DEFAULT_DATA_CHUNKS
+    ): ByteSource? {
+        val mirrorOffset = numDataChunks + 2
+        val ordered = ArrayList<ByteArray>(numDataChunks)
+        for (i in 0 until numDataChunks) {
+            val chunk = availableChunks[i] ?: availableChunks[i + mirrorOffset] ?: return null
+            if (chunk.size != chunkSize) return null
+            ordered.add(chunk)
+        }
+        if (totalLen.toLong() > ordered.size.toLong() * chunkSize) return null
+        return StripedSource(ordered, chunkSize, totalLen.toLong())
+    }
+
     fun reconstructRaidZ2(
         availableChunks: Map<Int, ByteArray>,
         totalLen: Int,

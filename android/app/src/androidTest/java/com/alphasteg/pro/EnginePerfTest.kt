@@ -209,6 +209,58 @@ class EnginePerfTest {
     }
 
     /**
+     * The restore path in its real shape: RAID chunks in hand, decrypting straight
+     * out of them into a sink without ever assembling the blob.
+     *
+     * This is what a restore-to-disk actually costs. Rebuilding the payload first
+     * would hold the chunks and a full-size copy at the same time, so the number
+     * here should beat [findsStreamingDecryptCeiling], which starts from a
+     * contiguous ciphertext.
+     */
+    @Test
+    fun findsChunkedRestoreCeiling() {
+        Log.i(tag, "=== restore from RAID chunks -> sink (no blob assembled) ===")
+        CryptoEngine.clearKeyCache()
+        var lastOk = 0
+        for (sizeMb in listOf(16, 32, 64, 96, 128)) {
+            val expected = sizeMb.toLong() * 1024 * 1024
+            val ok = try {
+                // Build chunks the way a vault does, then drop everything else:
+                // a restore only ever holds the gathered chunks.
+                var raid: com.alphasteg.pro.engine.RaidVaultEngine.RaidZ2Result? = run {
+                    val enc = CryptoEngine.encryptPayload(payload(sizeMb * 1024 * 1024), "benchPassword1")
+                    RaidVaultEngine.encodeRaidZ2WithHotSpares(enc, 4, false)
+                }
+                System.gc()
+
+                val map = raid!!.chunks.associate { it.chunkIndex to it.data }
+                val source = RaidVaultEngine.sourceIfIntact(
+                    map, raid!!.totalLength, raid!!.chunkSize, 4
+                ) ?: error("chunks were all present, so this must be readable directly")
+
+                val sink = object : java.io.OutputStream() {
+                    var total = 0L
+                    override fun write(b: Int) { total++ }
+                    override fun write(b: ByteArray, off: Int, len: Int) { total += len }
+                }
+                val t0 = System.nanoTime()
+                CryptoEngine.decryptTo(source, "benchPassword1", sink)
+                val took = (System.nanoTime() - t0) / 1_000_000.0
+                Log.i(tag, "  ${sizeMb}MB restored in %.0f ms (%d bytes)".format(took, sink.total))
+                raid = null
+                sink.total == expected
+            } catch (e: OutOfMemoryError) {
+                false
+            }
+            Log.i(tag, "  ${sizeMb}MB: ${if (ok) "ok" else "OOM"}")
+            if (!ok) break
+            lastOk = sizeMb
+            System.gc()
+        }
+        Log.i(tag, "largest file restored from chunks: ${lastOk}MB")
+    }
+
+    /**
      * The old constraint, kept for comparison: two full-size buffers alive at once,
      * which is what the unframed format forced on every restore.
      */

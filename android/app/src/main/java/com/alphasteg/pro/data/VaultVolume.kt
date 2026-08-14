@@ -256,15 +256,20 @@ class VaultVolume {
         val entry = loadIndex(pool, password).entries.firstOrNull { it.fileId == fileId }
             ?: throw IllegalStateException("Vaulted file not found in volume index.")
         progress.update(1, 3, "Gathering chunks from carriers…")
-        // The chunk map is scoped to this block so it becomes unreachable the moment
-        // the blob is assembled: holding both at once is what decides whether a
-        // large file restores at all on a small-heap device.
-        val encrypted = run {
-            val chunks = gatherChunks(fileId, pool, password)
-            progress.update(2, 3, "Reconstructing and decrypting…")
+        val chunks = gatherChunks(fileId, pool, password)
+        progress.update(2, 3, "Reconstructing and decrypting…")
+
+        // Nothing lost is the ordinary case, and then the payload is just the data
+        // chunks in order — decrypt straight out of them rather than joining them
+        // into a second full-size copy first. Only a genuine loss pays for a
+        // rebuild, and only then does peak memory double.
+        val intact = RaidVaultEngine.sourceIfIntact(
+            chunks, entry.totalLen, entry.chunkSize, entry.numData
+        )
+        val source = intact ?: com.alphasteg.pro.engine.ArraySource(
             RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
-        }
-        CryptoEngine.decryptTo(encrypted, password, sink)
+        )
+        CryptoEngine.decryptTo(source, password, sink)
         sink.flush()
         progress.update(3, 3, "Done.")
         return entry.name

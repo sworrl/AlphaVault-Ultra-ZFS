@@ -1,6 +1,7 @@
 package com.alphasteg.pro
 
 import com.alphasteg.pro.engine.RaidVaultEngine
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -81,6 +82,50 @@ class RaidSpreadTest {
         // save into tens of thousands of embeds.
         val n = RaidVaultEngine.dataChunksFor(50_000)
         assertTrue("chunk count must stay bounded, got $n", n <= 512)
+    }
+
+    @Test
+    fun tailPaddingSurvivesARoundTrip() {
+        // Sizes that do not divide evenly, so the last chunk is part padding. The
+        // padded copy of the whole payload was removed, so this is the case most
+        // likely to break if the slicing arithmetic is wrong.
+        for (size in listOf(1, 7, 999, 1001, 4095, 4097)) {
+            for (n in listOf(2, 4, 7)) {
+                val data = ByteArray(size) { (it * 17 + n).toByte() }
+                val encoded = RaidVaultEngine.encodeRaidZ2WithHotSpares(data, n, true)
+                val all = encoded.chunks.associate { it.chunkIndex to it.data }
+                val back = RaidVaultEngine.reconstructRaidZ2(all, encoded.totalLength, encoded.chunkSize, n)
+                assertEquals("size=$size n=$n", data.toList(), back.toList())
+            }
+        }
+    }
+
+    @Test
+    fun hotSparesMirrorTheirOriginalsExactly() {
+        val data = ByteArray(5000) { (it * 3).toByte() }
+        val encoded = RaidVaultEngine.encodeRaidZ2WithHotSpares(data, 4, true)
+
+        val primaries = encoded.chunks.filter { !it.isHotSpare }
+        val spares = encoded.chunks.filter { it.isHotSpare }
+        assertEquals(primaries.size, spares.size)
+
+        // Spares share their original's array rather than duplicating it, which is
+        // only sound because chunk data is read-only from here on.
+        primaries.forEachIndexed { i, original ->
+            assertArrayEquals("spare $i", original.data, spares[i].data)
+        }
+    }
+
+    @Test
+    fun aFileIsRecoverableFromSparesAlone() {
+        // Losing every primary chunk still leaves the mirrors, which is the point
+        // of hot spares and would break if sharing had aliased the wrong array.
+        val data = ByteArray(3000) { (it * 11).toByte() }
+        val encoded = RaidVaultEngine.encodeRaidZ2WithHotSpares(data, 4, true)
+        val sparesOnly = encoded.chunks.filter { it.isHotSpare }.associate { it.chunkIndex to it.data }
+
+        val back = RaidVaultEngine.reconstructRaidZ2(sparesOnly, encoded.totalLength, encoded.chunkSize, 4)
+        assertEquals(data.toList(), back.toList())
     }
 
     @Test

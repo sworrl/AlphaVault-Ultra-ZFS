@@ -289,45 +289,74 @@ object CryptoEngine {
             out.write(data)
             return
         }
+        decryptTo(ArraySource(data), password, out)
+    }
+
+    /**
+     * Decrypt from a possibly non-contiguous [source], one frame at a time.
+     *
+     * A restore holds the payload as RAID chunks; joining them into one array
+     * before decrypting would double peak memory for nothing. Reading through a
+     * [ByteSource] keeps the chunks where they are, so the working set is the
+     * chunks plus a single frame.
+     */
+    fun decryptTo(source: ByteSource, password: String?, out: OutputStream) {
+        val total = source.size
+        if (total < HEADER_SIZE + HMAC_SIZE) {
+            throw IllegalArgumentException("Corrupted cascade vault payload header.")
+        }
+        val magic = source.slice(0, CASCADE_MAGIC.size)
+        if (!magic.contentEquals(CASCADE_MAGIC)) {
+            throw IllegalArgumentException("Not a cascade vault payload.")
+        }
         if (password.isNullOrBlank()) {
             throw IllegalArgumentException("This payload is encrypted. Password required.")
         }
-        if (data.size < HEADER_SIZE + HMAC_SIZE) {
-            throw IllegalArgumentException("Corrupted cascade vault payload header.")
-        }
 
-        val salt = data.copyOfRange(8, 8 + SALT_SIZE)
-        val declaredTotal = declaredLength(data)
+        val salt = source.slice(8, SALT_SIZE)
         val master = masterKey(password.trim(), salt)
 
+        var declaredTotal = 0L
+        val lenBytes = source.slice((8 + SALT_SIZE + 4).toLong(), 8)
+        for (b in lenBytes) declaredTotal = (declaredTotal shl 8) or (b.toLong() and 0xFF)
+
         // Authenticate the whole envelope before decrypting anything, so tampered
-        // input never reaches either cipher.
-        val macEnd = data.size - HMAC_SIZE
+        // input never reaches either cipher and nothing is written to [out] until
+        // the payload is known to be genuine.
+        val macEnd = total - HMAC_SIZE
         val mac = Mac.getInstance("HmacSHA512")
         mac.init(SecretKeySpec(outerMacKey(master), "HmacSHA512"))
-        mac.update(data, 0, macEnd)
-        val expected = mac.doFinal()
-        val actual = data.copyOfRange(macEnd, data.size)
-        if (!MessageDigest.isEqual(expected, actual)) {
+        val window = ByteArray(64 * 1024)
+        var scanned = 0L
+        while (scanned < macEnd) {
+            val take = minOf(window.size.toLong(), macEnd - scanned).toInt()
+            source.copyInto(scanned, window, 0, take)
+            mac.update(window, 0, take)
+            scanned += take
+        }
+        if (!MessageDigest.isEqual(mac.doFinal(), source.slice(macEnd, HMAC_SIZE))) {
             throw IllegalArgumentException("Decryption failed: incorrect password or tampered payload.")
         }
 
-        var pos = HEADER_SIZE
+        var pos = HEADER_SIZE.toLong()
         var frameIndex = 0
         var written = 0L
+        var frameBuf = ByteArray(0)
         while (pos < macEnd) {
             if (pos + FRAME_HEADER > macEnd) {
                 throw IllegalArgumentException("Corrupted cascade vault payload: truncated frame header.")
             }
-            val aesNonce = data.copyOfRange(pos, pos + GCM_NONCE_SIZE)
-            val chachaNonce = data.copyOfRange(
-                pos + GCM_NONCE_SIZE, pos + GCM_NONCE_SIZE + CHACHA_NONCE_SIZE
-            )
-            val cipherLen = readInt(data, pos + GCM_NONCE_SIZE + CHACHA_NONCE_SIZE)
+            val aesNonce = source.slice(pos, GCM_NONCE_SIZE)
+            val chachaNonce = source.slice(pos + GCM_NONCE_SIZE, CHACHA_NONCE_SIZE)
+            val cipherLen = source.readInt(pos + GCM_NONCE_SIZE + CHACHA_NONCE_SIZE)
             pos += FRAME_HEADER
             if (cipherLen < 0 || pos + cipherLen > macEnd) {
                 throw IllegalArgumentException("Corrupted cascade vault payload: bad frame length.")
             }
+
+            // Grown once and reused: every frame but the last is the same size.
+            if (frameBuf.size < cipherLen) frameBuf = ByteArray(cipherLen)
+            source.copyInto(pos, frameBuf, 0, cipherLen)
 
             val keys = frameKeys(master, frameIndex, aesNonce, chachaNonce)
 
@@ -337,7 +366,7 @@ object CryptoEngine {
                 SecretKeySpec(keys.chacha, "ChaCha20"),
                 IvParameterSpec(chachaNonce)
             )
-            val layer1 = chachaCipher.doFinal(data, pos, cipherLen)
+            val layer1 = chachaCipher.doFinal(frameBuf, 0, cipherLen)
 
             val aesCipher = Cipher.getInstance("AES/GCM/NoPadding")
             aesCipher.init(
