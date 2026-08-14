@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchServer: MaterialSwitch
     private lateinit var tvServerUrl: TextView
     private var webServer: com.alphasteg.pro.net.VaultWebServer? = null
+    private var beacon: com.alphasteg.pro.net.VaultBeacon? = null
 
     private var isDecoyMode = false
     private var pendingWipe = false
@@ -328,6 +329,7 @@ class MainActivity : AppCompatActivity() {
         val items = arrayOf(
             "Hiding method",
             "Open another library (read-only)",
+            "Open a vault over Wi-Fi",
             "Test security key (FIDO2)",
             "Check for updates"
         )
@@ -341,8 +343,11 @@ class MainActivity : AppCompatActivity() {
                     1 -> pickStorageVolume { root ->
                         showFolderPicker(root) { folder -> useGuestLibrary(folder) }
                     }
-                    2 -> testSecurityKey()
-                    3 -> checkForUpdate(manual = true)
+                    // The other half of Wi-Fi sync: read a vault a phone on this
+                    // network has unlocked, and play it through this device's DAC.
+                    2 -> connectToRemoteVault()
+                    3 -> testSecurityKey()
+                    4 -> checkForUpdate(manual = true)
                 }
             }
             .show()
@@ -570,6 +575,133 @@ class MainActivity : AppCompatActivity() {
         }.onFailure {
             runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
         }
+    }
+
+    // ---------- reading a vault another device is serving over Wi-Fi ----------
+
+    /**
+     * Find vaults on the network and open one.
+     *
+     * This is the DAP's half of Wi-Fi sync: the phone holds the carriers and does
+     * the decryption, and this device - which has the DAC but not the storage -
+     * browses and plays what the phone has unlocked. Nothing is decrypted here.
+     */
+    private fun connectToRemoteVault() {
+        val found = LinkedHashMap<String, com.alphasteg.pro.net.VaultBeacon.Found>()
+        val scanner = com.alphasteg.pro.net.VaultBeacon(this)
+
+        val list = android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.remote_searching)
+            .setAdapter(list) { _, which ->
+                found.values.toList().getOrNull(which)?.let { promptRemoteToken(it) }
+            }
+            .setNeutralButton(R.string.remote_enter_manually) { _, _ -> promptRemoteAddress() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setOnDismissListener { scanner.stopDiscovery() }
+            .show()
+
+        scanner.discover { vault ->
+            runOnUiThread {
+                if (found.put(vault.url, vault) == null) {
+                    list.add("📡 ${vault.name}  (${vault.host})")
+                    list.notifyDataSetChanged()
+                    dialog.setTitle(getString(R.string.remote_found_count, found.size))
+                }
+            }
+        }
+    }
+
+    /** Fallback for networks where mDNS is blocked, which is common on guest Wi-Fi. */
+    private fun promptRemoteAddress() {
+        val input = android.widget.EditText(this).apply {
+            hint = "192.168.1.20:8973"
+            setSingleLine()
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.remote_enter_manually)
+            .setView(input)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val text = input.text.toString().trim().removePrefix("http://").trimEnd('/')
+                val host = text.substringBefore(':')
+                val port = text.substringAfter(':', "8973").toIntOrNull() ?: 8973
+                if (host.isNotEmpty()) {
+                    promptRemoteToken(com.alphasteg.pro.net.VaultBeacon.Found(host, host, port))
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun promptRemoteToken(vault: com.alphasteg.pro.net.VaultBeacon.Found) {
+        val input = android.widget.EditText(this).apply {
+            hint = getString(R.string.remote_token_hint)
+            setSingleLine()
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(vault.name)
+            .setMessage(getString(R.string.remote_token_message, vault.url))
+            .setView(input)
+            .setPositiveButton(R.string.remote_connect) { _, _ ->
+                openRemoteVault(
+                    com.alphasteg.pro.net.RemoteVault(vault.host, vault.port, input.text.toString().trim()),
+                    "/"
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Browse one folder of a remote vault, recursing as folders are tapped. */
+    private fun openRemoteVault(remote: com.alphasteg.pro.net.RemoteVault, path: String) {
+        Toast.makeText(this, R.string.remote_loading, Toast.LENGTH_SHORT).show()
+        Thread {
+            val items = remote.list(path)
+            val reachable = items.isNotEmpty() || remote.canConnect()
+            runOnUiThread {
+                if (!reachable) {
+                    Toast.makeText(this, R.string.remote_rejected, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val labels = items.map {
+                    if (it.isFolder) "📁 ${it.name}" else "🔐 ${it.name}  (${formatSize(it.size)})"
+                }.toTypedArray()
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle(if (path == "/") getString(R.string.remote_title) else path)
+                    .setItems(labels) { _, which ->
+                        val item = items[which]
+                        if (item.isFolder) openRemoteVault(remote, item.path)
+                        else fetchRemoteFile(remote, item)
+                    }
+                    .setNeutralButton(R.string.guest_pick_up) { _, _ ->
+                        if (path != "/") openRemoteVault(remote, path.substringBeforeLast('/').ifEmpty { "/" })
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }.start()
+    }
+
+    /**
+     * Pull one file down and open it in the secure viewer, so it plays through
+     * this device's DAC without ever being written to disk.
+     */
+    private fun fetchRemoteFile(
+        remote: com.alphasteg.pro.net.RemoteVault,
+        item: com.alphasteg.pro.net.RemoteVault.Item
+    ) {
+        Toast.makeText(this, getString(R.string.remote_fetching, item.name), Toast.LENGTH_SHORT).show()
+        Thread {
+            val buffer = java.io.ByteArrayOutputStream()
+            val ok = remote.fetch(item.path, buffer)
+            runOnUiThread {
+                if (!ok) {
+                    Toast.makeText(this, R.string.remote_fetch_failed, Toast.LENGTH_LONG).show()
+                } else {
+                    VaultViewerActivity.show(this, item.name, buffer.toByteArray())
+                }
+            }
+        }.start()
     }
 
     // ---------- guest sessions: reading a library this device does not own ----------
@@ -994,7 +1126,13 @@ class MainActivity : AppCompatActivity() {
                 webServer = server
                 val svc = Intent(this, VaultService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
-                tvServerUrl.text = "Mount / browse (read-only):\nhttp://$ip:${server.port}/\nUser: vault    Password: $token\n\nStops when the vault locks."
+                // Announce on the network so a player does not need the address typed
+                // into it. The token is never advertised, so the beacon reveals that a
+                // vault is being served and nothing more.
+                beacon = com.alphasteg.pro.net.VaultBeacon(this).also {
+                    it.advertise("AlphaVault on ${Build.MODEL}", server.port)
+                }
+                tvServerUrl.text = "Mount / browse (read-only):\nhttp://$ip:${server.port}/\nUser: vault    Password: $token\n\nVisible on this network as \"AlphaVault on ${Build.MODEL}\".\nStops when the vault locks."
             }
             .onFailure {
                 switchServer.isChecked = false
@@ -1003,6 +1141,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopNetworkDrive() {
+        // The beacon must not outlive the server it points at.
+        beacon?.stopAdvertising(); beacon = null
         webServer?.stop(); webServer = null
         runCatching { stopService(Intent(this, VaultService::class.java)) }
         tvServerUrl.text = getString(R.string.server_status_stopped)

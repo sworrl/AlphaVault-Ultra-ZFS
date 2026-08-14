@@ -146,9 +146,14 @@ class VaultWebServer(
                         else writeBody(out, VaultDav.contentType(entry.name), bytes, range, headOnly = false)
                     }
                 } else if (isFolder(index, path)) {
-                    val html = VaultDav.htmlListing(index, path)
-                    if (method == "HEAD") writeHead(out, "200 OK", mapOf("Content-Type" to "text/html; charset=utf-8"))
-                    else writeText(out, "200 OK", "text/html; charset=utf-8", html)
+                    // Our own client asks for JSON; a browser gets the HTML page.
+                    val wantsJson = rawPath.substringAfter('?', "").contains(VaultDav.JSON_QUERY)
+                    val type = if (wantsJson) "application/json" else "text/html; charset=utf-8"
+                    if (method == "HEAD") writeHead(out, "200 OK", mapOf("Content-Type" to type))
+                    else writeText(
+                        out, "200 OK", type,
+                        if (wantsJson) VaultDav.jsonListing(index, path) else VaultDav.htmlListing(index, path)
+                    )
                 } else {
                     writeText(out, "404 Not Found", "text/plain", "not found")
                 }

@@ -57,6 +57,20 @@
     <string name="server_status_stopped">Server Status: Stopped</string>
     <string name="server_status_running">Maxed Out Cascade Encryption Active (768-bit)\nAES-256-GCM + ChaCha20 + HMAC-SHA512</string>
 
+    <!-- Reading a vault another device is serving over Wi-Fi -->
+    <string name="remote_open">📡 OPEN A VAULT OVER WI-FI</string>
+    <string name="remote_searching">Looking for vaults on this network…</string>
+    <string name="remote_found_count">Vaults on this network (%1$d)</string>
+    <string name="remote_enter_manually">Enter an address</string>
+    <string name="remote_token_hint">Password shown on the other device</string>
+    <string name="remote_token_message">Connecting to %1$s.\nEnter the password its Wi-Fi Sync screen is showing.</string>
+    <string name="remote_connect">CONNECT</string>
+    <string name="remote_title">Remote vault</string>
+    <string name="remote_loading">Reading…</string>
+    <string name="remote_rejected">That password was not accepted, or the vault has locked.</string>
+    <string name="remote_fetching">Fetching \"%1$s\"…</string>
+    <string name="remote_fetch_failed">Could not fetch that file.</string>
+
     <!-- Playback / DAC -->
     <string name="cast_to_renderer">▶ PLAY ON…</string>
     <string name="cast_searching">Looking for players on this network…</string>
