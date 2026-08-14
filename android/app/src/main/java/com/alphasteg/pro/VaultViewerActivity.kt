@@ -31,6 +31,7 @@ class VaultViewerActivity : AppCompatActivity() {
     private var player: MediaPlayer? = null
     private var pdfRenderer: android.graphics.pdf.PdfRenderer? = null
     private var pdfThread: android.os.HandlerThread? = null
+    private var audioRouteWatch: android.media.AudioDeviceCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -133,6 +134,7 @@ class VaultViewerActivity : AppCompatActivity() {
                     mp.setDataSource(ByteArrayMediaDataSource(bytes))
                     mp.setSurface(h.surface)
                     mp.setOnPreparedListener {
+                        com.alphasteg.pro.audio.AudioOutput.pin(it, this@VaultViewerActivity)
                         it.start()
                         val control = mediaControlFor(mp)
                         controller.setMediaPlayer(control)
@@ -241,11 +243,18 @@ class VaultViewerActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         }
+        // Naming the output makes it obvious the track is going to the DAC rather
+        // than the phone speaker, and updates if it is plugged in mid-listen.
+        fun statusText() = "♪ $name\nDecrypted in memory.\n${com.alphasteg.pro.audio.AudioOutput.describe(this)}"
         val status = TextView(this).apply {
-            text = "♪ $name\nDecrypted in memory."
+            text = statusText()
             setTextColor(Color.parseColor("#00F2FE"))
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(24), dp(24), dp(24))
+        }
+        audioRouteWatch = com.alphasteg.pro.audio.AudioOutput.watch(this) { dac ->
+            status.text = statusText()
+            player?.let { com.alphasteg.pro.audio.AudioOutput.pin(it, this, dac) }
         }
         val btn = Button(this).apply { text = "PLAY" }
         container.addView(status)
@@ -267,7 +276,10 @@ class VaultViewerActivity : AppCompatActivity() {
                 val fresh = MediaPlayer()
                 fresh.setDataSource(ByteArrayMediaDataSource(bytes))
                 fresh.setOnCompletionListener { btn.text = "PLAY" }
-                fresh.setOnPreparedListener { it.start(); btn.text = "PAUSE" }
+                fresh.setOnPreparedListener {
+                    com.alphasteg.pro.audio.AudioOutput.pin(it, this)
+                    it.start(); btn.text = "PAUSE"
+                }
                 fresh.prepareAsync()
                 player = fresh
             }.onFailure {
@@ -279,6 +291,8 @@ class VaultViewerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        com.alphasteg.pro.audio.AudioOutput.stopWatching(this, audioRouteWatch)
+        audioRouteWatch = null
         player?.release()
         player = null
         runCatching { pdfRenderer?.close() }
