@@ -25,7 +25,21 @@ object LibraryScanner {
      * stable between scans, which matters because carrier order decides chunk
      * placement.
      */
-    fun scan(root: File, maxDepth: Int = 8, limit: Int = 20_000): List<File> {
+    /**
+     * Ceiling on carriers returned from one scan.
+     *
+     * A 900 GB library of hi-res FLAC runs to roughly 18,000 tracks, so a cap of
+     * 20,000 was close enough to be dangerous - crossing it would quietly drop
+     * carriers, and a pool that silently changes shape is exactly what breaks index
+     * lookup. Set well clear of any real collection, and [hitLimit] reports when it
+     * is reached rather than leaving the truncation invisible.
+     */
+    const val DEFAULT_LIMIT = 200_000
+
+    /** True if the last-returned list was cut short by the limit. */
+    fun hitLimit(found: List<File>, limit: Int = DEFAULT_LIMIT): Boolean = found.size >= limit
+
+    fun scan(root: File, maxDepth: Int = 8, limit: Int = DEFAULT_LIMIT): List<File> {
         if (!root.isDirectory || !root.canRead()) return emptyList()
         val found = ArrayList<File>()
         walk(root, 0, maxDepth, limit, found)

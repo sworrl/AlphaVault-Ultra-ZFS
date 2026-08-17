@@ -37,23 +37,39 @@ object RaidVaultEngine {
     private const val MAX_DATA_CHUNKS = 512    // bounds embed work on enormous libraries
 
     /**
+     * The most carriers one file may be spread over.
+     *
+     * A carrier embed rewrites the whole FLAC, so this is a work budget, not a
+     * style preference. At ~50 MB a track, 64 carriers is about 6 GB of read and
+     * write for one vaulted file — already slow on an SD card. Asking for half of
+     * an 18,000-track library instead would be ~9,000 carriers and ~880 GB, hours
+     * of work and a great deal of flash wear to store one document.
+     *
+     * Library-wide spread is achieved across the vault instead, by rotating where
+     * each file starts; see [com.alphasteg.pro.data.CarrierPlacement].
+     */
+    const val MAX_CARRIERS_PER_FILE = 64
+
+    /**
      * How many data chunks to split a file into, given a pool of [poolSize] carriers.
      *
-     * The vault is supposed to behave like a RAID array built from the whole music
-     * library rather than a handful of tracks, so the shape scales with the pool:
-     * aim to put data on at least [minCoverage] of the carriers. A file becomes
-     * `n` data chunks plus 2 parity chunks, and every chunk is mirrored to a hot
-     * spare, so it occupies `2 * (n + 2)` carriers; solving that against the target
-     * coverage is where the arithmetic below comes from.
+     * A file becomes `n` data chunks plus 2 parity chunks, and every chunk is
+     * mirrored to a hot spare, so it occupies `2 * (n + 2)` carriers. On a small
+     * library that can reasonably be a large share of it; on a big one the share
+     * has to fall, because the work is proportional to carriers touched and not to
+     * the size of the thing being hidden.
      *
-     * The result is clamped so it never asks for more carriers than exist, never
-     * drops below a usable RAID-Z2 shape, and never explodes into thousands of
-     * embeds on a very large library — past roughly 2000 tracks the coverage
-     * target yields to [MAX_DATA_CHUNKS].
+     * So this aims at [minCoverage] of the pool but yields to
+     * [MAX_CARRIERS_PER_FILE], and is clamped so it never asks for more carriers
+     * than exist nor drops below a usable RAID-Z2 shape.
      */
-    fun dataChunksFor(poolSize: Int, minCoverage: Double = 0.5): Int {
+    fun dataChunksFor(
+        poolSize: Int,
+        minCoverage: Double = 0.5,
+        maxCarriers: Int = MAX_CARRIERS_PER_FILE
+    ): Int {
         if (poolSize <= 0) return DEFAULT_DATA_CHUNKS
-        val targetCarriers = Math.ceil(poolSize * minCoverage).toInt()
+        val targetCarriers = minOf(Math.ceil(poolSize * minCoverage).toInt(), maxCarriers)
         val fromCoverage = Math.ceil(targetCarriers / 2.0).toInt() - 2
         val fitsPool = poolSize / 2 - 2
         return fromCoverage

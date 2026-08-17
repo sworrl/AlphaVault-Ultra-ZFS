@@ -161,8 +161,10 @@ class VaultVolume {
         progress.update(0, 100, "Encrypting ${name}…")
         val encrypted = CryptoEngine.encryptPayload(data, password)
         progress.update(5, 100, "Splitting into RAID chunks…")
-        // The array is sized from the library, not fixed, so data lands on at least
-        // half the carriers instead of always the same handful.
+        // Sized from the library but capped: a carrier embed rewrites the whole
+        // FLAC, so the work is proportional to carriers touched. Library-wide
+        // spread comes from rotating placement per file, not from one file
+        // covering half of a 900 GB collection.
         val dataChunks = RaidVaultEngine.dataChunksFor(pool.size)
         val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(encrypted, dataChunks, true)
         val fileId = raid.fileId
@@ -173,7 +175,7 @@ class VaultVolume {
                 "The hidden-audio (LSB) method needs at least ${raid.chunks.size} FLAC tracks for this file."
             }
         }
-        val carriers = assignChunkCarriers(raid.chunks, pool)
+        val carriers = CarrierPlacement.assign(raid.chunks, pool, fileId)
         val eng = engine(password)
         // Total steps ~ number of chunk embeds + an index-save step.
         val total = raid.chunks.size + 1
@@ -287,7 +289,9 @@ class VaultVolume {
             }.getOrNull()
             if (rebuilt == null) { unrecoverable.add(entry.name); continue }
             val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(rebuilt, entry.numData, true)
-            val carriers = assignChunkCarriers(raid.chunks, pool)
+            // The existing id, not the freshly generated one, so a heal lands on the
+            // same rotation the file was originally written to.
+            val carriers = CarrierPlacement.assign(raid.chunks, pool, entry.fileId)
             raid.chunks.forEachIndexed { i, chunk ->
                 val carrier = carriers[i]
                 if (!FlacCarrierEngine.isFlacFile(carrier)) return@forEachIndexed
@@ -365,38 +369,6 @@ class VaultVolume {
      * Place each RAID chunk so a chunk and its hot-spare mirror land in different
      * album folders; deleting or swapping one album then can't remove both copies.
      */
-    private fun assignChunkCarriers(
-        chunks: List<RaidVaultEngine.VaultChunkInfo>, pool: List<File>
-    ): List<File> {
-        if (pool.isEmpty()) return emptyList()
-        val byFolder = LinkedHashMap<String, ArrayDeque<File>>()
-        for (f in pool.sortedBy { it.absolutePath }) {
-            byFolder.getOrPut(f.parentFile?.name ?: "") { ArrayDeque() }.add(f)
-        }
-        val folderNames = byFolder.keys.toList()
-        val folderCount = folderNames.size.coerceAtLeast(1)
-        val primaryCount = chunks.count { !it.isHotSpare }.coerceAtLeast(1)
-
-        fun pullPreferring(folder: Int): File? {
-            for (off in 0 until folderCount) {
-                val q = byFolder[folderNames[(folder + off) % folderCount]]
-                if (q != null && q.isNotEmpty()) return q.removeFirst()
-            }
-            return null
-        }
-
-        val result = arrayOfNulls<File>(chunks.size)
-        chunks.forEachIndexed { i, c ->
-            val idx = c.chunkIndex
-            val preferred = if (idx < primaryCount) idx % folderCount
-            else ((idx - primaryCount) % folderCount + 1) % folderCount
-            result[i] = pullPreferring(preferred)
-        }
-        val used = result.filterNotNull()
-        val fallback = used.ifEmpty { pool }
-        for (i in result.indices) if (result[i] == null) result[i] = fallback[i % fallback.size]
-        return result.map { it!! }
-    }
 
     private fun spreadCarriers(n: Int, pool: List<File>): List<File> {
         if (pool.isEmpty()) return emptyList()

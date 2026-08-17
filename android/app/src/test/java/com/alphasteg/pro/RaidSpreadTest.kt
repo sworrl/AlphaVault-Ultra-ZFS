@@ -19,11 +19,29 @@ class RaidSpreadTest {
     }
 
     @Test
-    fun usesAtLeastHalfOfARealisticLibrary() {
-        for (pool in listOf(12, 20, 50, 100, 200, 500, 1000)) {
+    fun coversHalfOfALibrarySmallEnoughToAffordIt() {
+        // Up to the point where the per-file carrier budget bites, a single file
+        // still spreads over at least half the library.
+        val affordable = RaidVaultEngine.MAX_CARRIERS_PER_FILE * 2
+        for (pool in listOf(12, 20, 50, 100, affordable)) {
             assertTrue(
                 "pool=$pool only covered ${"%.1f".format(coverage(pool) * 100)}%",
                 coverage(pool) >= 0.5
+            )
+        }
+    }
+
+    @Test
+    fun aboveThatBudgetPerFileCoverageDeliberatelyFalls() {
+        // Beyond it, coverage yields: a carrier embed rewrites the whole FLAC, so
+        // half of an 18,000-track library would be ~9,000 rewrites for one file.
+        // Library-wide spread is achieved by rotating placement per file instead;
+        // see CarrierPlacementTest.
+        for (pool in listOf(1_000, 6_238, 18_000)) {
+            val used = RaidVaultEngine.carriersUsedFor(RaidVaultEngine.dataChunksFor(pool))
+            assertTrue(
+                "pool=$pool touched $used carriers, over the budget",
+                used <= RaidVaultEngine.MAX_CARRIERS_PER_FILE
             )
         }
     }
@@ -44,13 +62,14 @@ class RaidSpreadTest {
     }
 
     @Test
-    fun exactCoverageForRoundLibraries() {
-        // 100 carriers: 23 data + 2 parity = 25, mirrored to 50 = exactly half.
+    fun exactShapeForRoundLibraries() {
+        // 100 carriers: half is 50, under the 64 budget, so 23 data + 2 parity = 25,
+        // mirrored to 50 - exactly half the library.
         assertEquals(23, RaidVaultEngine.dataChunksFor(100))
         assertEquals(50, RaidVaultEngine.carriersUsedFor(23))
-        // 200 carriers: 48 + 2 = 50, mirrored to 100.
-        assertEquals(48, RaidVaultEngine.dataChunksFor(200))
-        assertEquals(100, RaidVaultEngine.carriersUsedFor(48))
+        // 200 carriers: half would be 100, over the budget, so it settles at 64.
+        assertEquals(30, RaidVaultEngine.dataChunksFor(200))
+        assertEquals(64, RaidVaultEngine.carriersUsedFor(30))
     }
 
     @Test
