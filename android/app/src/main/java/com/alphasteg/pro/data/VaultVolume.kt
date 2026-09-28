@@ -64,9 +64,10 @@ class VaultVolume {
     var carrierMethod: com.alphasteg.pro.data.CarrierMethod = com.alphasteg.pro.data.CarrierMethod.METADATA
 
     /**
-     * Called when hidden-audio data is known to exist: on every LSB write, and on
-     * unlocking a non-empty LSB vault. The duress wipe reads the flag this sets to
-     * decide whether it must scrub the audio, which it cannot locate without the code.
+     * Called on every LSB write, so the duress wipe knows it must scrub the audio,
+     * which it cannot locate without the code. Only an actual write counts: the
+     * selected method says nothing about how existing data was stored, and a false
+     * positive makes duress re-encode the whole library.
      */
     var onHiddenWrite: (() -> Unit)? = null
 
@@ -84,13 +85,9 @@ class VaultVolume {
         // replica set moved) or on first run.
         // The full scan tries the cheap metadata pass over every carrier before
         // paying for an audio decode of each one.
-        val index = scanForIndex(spreadCarriers(REPLICAS, pool), password)
+        return scanForIndex(spreadCarriers(REPLICAS, pool), password)
             ?: scanForIndex(pool, password, audio = false)
             ?: scanForIndex(pool, password) ?: Index(0, emptyList())
-        if (index.entries.isNotEmpty() && carrierMethod == com.alphasteg.pro.data.CarrierMethod.LSB) {
-            onHiddenWrite?.invoke()
-        }
-        return index
     }
 
     /** The carriers that hold the index replicas; the duress wipe erases these first. */
