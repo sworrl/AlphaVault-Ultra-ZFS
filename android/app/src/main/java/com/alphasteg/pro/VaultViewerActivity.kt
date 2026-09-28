@@ -31,6 +31,7 @@ class VaultViewerActivity : AppCompatActivity() {
     private var player: MediaPlayer? = null
     private var pdfRenderer: android.graphics.pdf.PdfRenderer? = null
     private var pdfThread: android.os.HandlerThread? = null
+    private var audioRouteWatch: android.media.AudioDeviceCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,8 +43,7 @@ class VaultViewerActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         val name = intent.getStringExtra(EXTRA_NAME) ?: "Vaulted file"
-        val bytes = pending
-        pending = null
+        val bytes = pending.remove(intent.getLongExtra(EXTRA_TOKEN, -1L))
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -133,6 +133,7 @@ class VaultViewerActivity : AppCompatActivity() {
                     mp.setDataSource(ByteArrayMediaDataSource(bytes))
                     mp.setSurface(h.surface)
                     mp.setOnPreparedListener {
+                        com.alphasteg.pro.audio.AudioOutput.pin(it, this@VaultViewerActivity)
                         it.start()
                         val control = mediaControlFor(mp)
                         controller.setMediaPlayer(control)
@@ -241,11 +242,18 @@ class VaultViewerActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         }
+        // Naming the output makes it obvious the track is going to the DAC rather
+        // than the phone speaker, and updates if it is plugged in mid-listen.
+        fun statusText() = "♪ $name\nDecrypted in memory.\n${com.alphasteg.pro.audio.AudioOutput.describe(this)}"
         val status = TextView(this).apply {
-            text = "♪ $name\nDecrypted in memory."
+            text = statusText()
             setTextColor(Color.parseColor("#00F2FE"))
             gravity = Gravity.CENTER
             setPadding(dp(24), dp(24), dp(24), dp(24))
+        }
+        audioRouteWatch = com.alphasteg.pro.audio.AudioOutput.watch(this) { dac ->
+            status.text = statusText()
+            player?.let { com.alphasteg.pro.audio.AudioOutput.pin(it, this, dac) }
         }
         val btn = Button(this).apply { text = "PLAY" }
         container.addView(status)
@@ -267,7 +275,10 @@ class VaultViewerActivity : AppCompatActivity() {
                 val fresh = MediaPlayer()
                 fresh.setDataSource(ByteArrayMediaDataSource(bytes))
                 fresh.setOnCompletionListener { btn.text = "PLAY" }
-                fresh.setOnPreparedListener { it.start(); btn.text = "PAUSE" }
+                fresh.setOnPreparedListener {
+                    com.alphasteg.pro.audio.AudioOutput.pin(it, this)
+                    it.start(); btn.text = "PAUSE"
+                }
                 fresh.prepareAsync()
                 player = fresh
             }.onFailure {
@@ -279,6 +290,8 @@ class VaultViewerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        com.alphasteg.pro.audio.AudioOutput.stopWatching(this, audioRouteWatch)
+        audioRouteWatch = null
         player?.release()
         player = null
         runCatching { pdfRenderer?.close() }
@@ -330,16 +343,22 @@ class VaultViewerActivity : AppCompatActivity() {
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
+        private const val EXTRA_TOKEN = "vault_view_token"
+
         // Plaintext handed over in memory rather than through an Intent (which caps
-        // at ~1 MB and would be logged). Cleared as soon as the viewer reads it.
-        @Volatile
-        private var pending: ByteArray? = null
+        // at ~1 MB and would be logged). Each open gets its own token, so a second
+        // open started before the first viewer appears cannot swap the bytes under
+        // it. Removed as soon as the viewer reads it.
+        private val pending = java.util.concurrent.ConcurrentHashMap<Long, ByteArray>()
+        private val nextToken = java.util.concurrent.atomic.AtomicLong()
 
         fun show(activity: AppCompatActivity, name: String, bytes: ByteArray) {
-            pending = bytes
+            val token = nextToken.incrementAndGet()
+            pending[token] = bytes
             activity.startActivity(
                 android.content.Intent(activity, VaultViewerActivity::class.java)
                     .putExtra(EXTRA_NAME, name)
+                    .putExtra(EXTRA_TOKEN, token)
             )
         }
     }

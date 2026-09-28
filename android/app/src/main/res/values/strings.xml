@@ -7,24 +7,42 @@
     <!-- Main: badges -->
     <string name="badge_cascade">CASCADE 768-BIT</string>
     <string name="badge_decoy">DECOY MODE</string>
+    <string name="badge_guest">GUEST • READ-ONLY</string>
 
     <!-- Main: vault panel -->
     <string name="vault_banner_desc">Cyber vault banner</string>
-    <string name="vault_pool_title">WHOLE LIBRARY STORAGE POOL (RAID-Z2)</string>
-    <string name="vault_pool_subtitle">Maxed Out Cascade Encryption • 768-Bit Entropy (AES-256 + ChaCha20 + HMAC-SHA512) • Multi-Album Swap Proof</string>
-    <string name="pool_mode_auto">Auto-Pool Whole Music Library (Multi-Album Resilient)</string>
-    <string name="pool_mode_manual">Manual FLAC Disks Selection</string>
+    <string name="vault_pool_title">LIBRARY STORAGE POOL (RAID-Z2)</string>
+    <string name="vault_pool_subtitle">Cascade encryption • 768-bit entropy (AES-256 + ChaCha20 + HMAC-SHA512) • Data spread across at least half the library</string>
+    <string name="pool_mode_auto">Use the whole library as one pool (multi-album resilient)</string>
+    <string name="pool_mode_manual">Pick individual FLAC tracks as disks</string>
     <string name="btn_encrypt_vault">+ ENCRYPT &amp; VAULT</string>
     <string name="btn_auto_discover">🔄 SYNC LIBRARY</string>
+    <string name="btn_open_library">📂 OPEN A LIBRARY</string>
     <string name="pool_disks_header">STORAGE POOL DISKS (FLAC CARRIERS)</string>
-    <string name="disks_empty">No FLAC carriers found.\nTransfer FLAC tracks into your Music folder, then tap SYNC LIBRARY.</string>
+    <string name="disks_empty">No FLAC carriers found.\nTap OPEN A LIBRARY to point at a folder, or put FLAC tracks in your Music folder and tap SYNC LIBRARY.</string>
     <string name="storage_scanning">Scanning storage…</string>
     <string name="vault_files_header">VAULT FILES</string>
-    <string name="vault_files_sub">Files hidden inside your FLAC volume. Tap one to view, restore, or delete.</string>
-    <string name="vault_empty">No vaulted files found.\nTap \'+ ENCRYPT &amp; VAULT\' to store sensitive files safely.</string>
+    <string name="vault_files_sub">Files hidden inside this FLAC library. Tap one to view or restore it.</string>
+    <string name="vault_empty">Nothing hidden here yet.\nTap \'+ ENCRYPT &amp; VAULT\' to store files inside these tracks.</string>
+    <string name="vault_empty_guest">No hidden files found in this library with that code.\nEither the library holds nothing, or the code is not the one it was made with.</string>
     <string name="vault_stats_decoy">0 Vault Files • Decoy Mode Active</string>
-    <string name="vault_stats_active">Whole Library Pool Active • 768-bit Multi-Cipher Cascade (AES-256-GCM + ChaCha20 + HMAC-SHA512)</string>
+    <string name="vault_stats_active">Library pool active • 768-bit cascade (AES-256-GCM + ChaCha20 + HMAC-SHA512)</string>
     <string name="vault_stats_synced">%1$d FLAC tracks • %2$s pool • RAID-Z2 ready</string>
+    <string name="vault_stats_guest">Guest session • %1$d FLAC tracks • nothing saved to this device</string>
+
+    <!-- Guest / ephemeral library access -->
+    <string name="guest_pick_volume_title">Where is the library?</string>
+    <string name="guest_pick_title">Choose a FLAC library</string>
+    <string name="guest_pick_message">Pick the folder holding the tracks. It is read directly and never copied, registered, or remembered.</string>
+    <string name="guest_pick_use">USE THIS FOLDER</string>
+    <string name="guest_pick_up">⬆ Up one level</string>
+    <string name="guest_pick_summary">%1$d FLAC tracks • %2$s</string>
+    <string name="guest_pick_empty">No FLAC tracks in this folder.</string>
+    <string name="guest_probing">Looking for hidden files with your code…</string>
+    <string name="guest_found">Found %1$d hidden file(s) in this library.</string>
+    <string name="guest_none">No hidden files opened with that code.</string>
+    <string name="guest_readonly_notice">Guest session: this library is open read-only, so nothing here can change someone else\'s tracks.</string>
+    <string name="guest_leave">CLOSE LIBRARY</string>
 
     <!-- Main: stego panel -->
     <string name="stego_title">FLAC Audio Stego Spectrum Visualizer</string>
@@ -34,10 +52,32 @@
 
     <!-- Main: server panel -->
     <string name="server_title">Wi-Fi External Web Server Sync</string>
-    <string name="server_desc">Enable this server to access your AlphaSteg vault from external web browsers over Wi-Fi.</string>
+    <string name="server_desc">Serve this unlocked library as a read-only drive to other devices on the same Wi-Fi.</string>
     <string name="server_switch">Enable Web Sync Server</string>
     <string name="server_status_stopped">Server Status: Stopped</string>
     <string name="server_status_running">Maxed Out Cascade Encryption Active (768-bit)\nAES-256-GCM + ChaCha20 + HMAC-SHA512</string>
+
+    <!-- Reading a vault another device is serving over Wi-Fi -->
+    <string name="remote_open">📡 OPEN A VAULT OVER WI-FI</string>
+    <string name="remote_searching">Looking for vaults on this network…</string>
+    <string name="remote_found_count">Vaults on this network (%1$d)</string>
+    <string name="remote_enter_manually">Enter an address</string>
+    <string name="remote_token_hint">Password shown on the other device</string>
+    <string name="remote_token_message">Connecting to %1$s.\nEnter the password its Wi-Fi Sync screen is showing.</string>
+    <string name="remote_connect">CONNECT</string>
+    <string name="remote_title">Remote vault</string>
+    <string name="remote_loading">Reading…</string>
+    <string name="remote_rejected">That password was not accepted, or the vault has locked.</string>
+    <string name="remote_fetching">Fetching \"%1$s\"…</string>
+    <string name="remote_fetch_failed">Could not fetch that file.</string>
+
+    <!-- Playback / DAC -->
+    <string name="cast_to_renderer">▶ PLAY ON…</string>
+    <string name="cast_searching">Looking for players on this network…</string>
+    <string name="cast_none_found">No network players found. Check both devices are on the same Wi-Fi.</string>
+    <string name="cast_sent">Sent to %1$s.</string>
+    <string name="cast_failed">%1$s would not start it: %2$s</string>
+    <string name="cast_needs_server">Turn on Wi-Fi Sync first so the player has something to fetch.</string>
 
     <!-- Bottom navigation -->
     <string name="nav_vault">Vault</string>
@@ -47,14 +87,17 @@
 
     <!-- Lock screen -->
     <string name="lock_title_locked">ALPHAVAULT ULTRA // LOCKED</string>
-    <string name="lock_title_onboarding">ALPHAVAULT // ONBOARDING</string>
+    <string name="lock_title_welcome">ALPHAVAULT ULTRA</string>
+    <string name="lock_title_onboarding">ALPHAVAULT // NEW VAULT</string>
+    <string name="lock_status_welcome">Enter a code, then either open a library that already holds hidden files, or set this device up with a vault of its own.</string>
     <string name="lock_status_pin_only">Please enter your Hex++ Code (0-9, a-f, symbols)</string>
     <string name="lock_status_setup_master">Set your Hex++ Code: at least 8 characters (0-9, a-f, symbols)</string>
     <string name="lock_status_confirm_master">Re-enter your master code to confirm</string>
     <string name="lock_status_setup_duress">Now set a DIFFERENT duress code. Entering it later wipes the vault.</string>
     <string name="lock_status_confirm_duress">Re-enter your duress code to confirm</string>
     <string name="btn_unlock">UNLOCK</string>
-    <string name="btn_open_existing">Open an existing vault by code</string>
+    <string name="btn_open_existing">Open a library with this code (nothing saved here)</string>
+    <string name="btn_setup_this_device">Set this device up with its own vault</string>
     <string name="btn_next">NEXT</string>
     <string name="btn_create_vault">CREATE VAULT</string>
     <string name="key_backspace">⌫</string>

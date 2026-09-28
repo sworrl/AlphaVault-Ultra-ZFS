@@ -78,16 +78,28 @@ object LsbStego {
 
     // ---- key / marker ----
 
+    /** Samples hashed per digest call. Blocking this is worth ~20x on a real track. */
+    private const val HASH_BLOCK_SAMPLES = 8192
+
     /** Stable per-carrier key: SHA-512(code ‖ hash of the samples' upper 15 bits). */
     private fun deriveKey(samples: ShortArray, code: String): ByteArray {
         val upper = MessageDigest.getInstance("SHA-256")
-        val buf = ByteArray(2)
+        // Feed the digest in blocks rather than per sample: a 3-minute stereo
+        // track is ~16M samples, and at one update() call each the call overhead
+        // dwarfs the hashing. The byte stream is identical either way, so the
+        // digest — and every carrier already written — is unchanged.
+        val block = ByteArray(HASH_BLOCK_SAMPLES * 2)
+        var n = 0
         for (s in samples) {
             val hi = s.toInt() and 0xFFFE   // drop bit 0, the LSB we may change
-            buf[0] = (hi ushr 8).toByte()
-            buf[1] = hi.toByte()
-            upper.update(buf)
+            block[n++] = (hi ushr 8).toByte()
+            block[n++] = hi.toByte()
+            if (n == block.size) {
+                upper.update(block, 0, n)
+                n = 0
+            }
         }
+        if (n > 0) upper.update(block, 0, n)
         val msbHash = upper.digest()
         val k = MessageDigest.getInstance("SHA-512")
         k.update(code.toByteArray(Charsets.UTF_8))

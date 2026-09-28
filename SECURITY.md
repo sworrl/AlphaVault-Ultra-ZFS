@@ -66,9 +66,22 @@ answer an empty ring gives.
 
 ## Duress
 
-A duress code, distinct from the master code and set at onboarding, erases the
-stored credentials and strips every AlphaVault block from the carriers when
-entered, then shows an empty vault. It cannot be undone.
+A duress code, distinct from the master code and set at onboarding, opens an
+ordinary-looking vault that is empty and wipes behind it. It cannot be undone.
+
+- The duress code becomes the master code and a random, never-shown code fills
+  the duress slot, so the stored state keeps its usual shape and the device does
+  not fall back to onboarding. The old master code stops working.
+- A foreground service strips every AlphaVault metadata block from every FLAC it
+  can reach, index replicas first, and deletes the StrongBox key. If hidden-audio
+  (LSB) data was ever written, it also randomizes the LSB plane of every library
+  track, since it holds only the duress code and cannot locate a keyed payload.
+- The wipe is marked pending before it starts and cleared when it finishes, so a
+  kill, crash, or reboot resumes it on the next launch.
+
+What it does not hide: a silent "Updating music library" notification while it
+runs, and rewritten tracks with smaller sizes and new modified times. Someone who
+compares the library against an earlier copy will see which tracks changed.
 
 ## Reporting
 

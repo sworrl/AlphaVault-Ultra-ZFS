@@ -125,6 +125,11 @@
             android:name=".update.UpdateInstallReceiver"
             android:exported="false" />
 
+        <service
+            android:name=".DuressWipeService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Foreground Service for Background DSP Processing -->
         <service
             android:name=".VaultService"

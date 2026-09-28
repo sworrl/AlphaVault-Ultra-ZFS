@@ -58,6 +58,39 @@ object VaultDav {
         else -> "application/octet-stream"
     }
 
+    /**
+     * Parse a `Range: bytes=...` header against a body of [size], returning the
+     * byte range to send or null when there is no usable range. Renderers and
+     * browsers seek constantly, so this is what makes scrubbing work; only the
+     * first range of a multi-range request is honoured, which is allowed and is
+     * what every client we care about actually sends.
+     *
+     * A null return with a header present means unsatisfiable — the caller should
+     * answer 416 rather than sending the whole body.
+     */
+    fun parseRange(header: String?, size: Long): LongRange? {
+        if (header == null || size <= 0) return null
+        val v = header.trim()
+        if (!v.startsWith("bytes=", ignoreCase = true)) return null
+        val spec = v.substring(6).substringBefore(',').trim()
+        val dash = spec.indexOf('-')
+        if (dash < 0) return null
+        val startText = spec.substring(0, dash).trim()
+        val endText = spec.substring(dash + 1).trim()
+
+        if (startText.isEmpty()) {
+            // "bytes=-N": the final N bytes.
+            val n = endText.toLongOrNull() ?: return null
+            if (n <= 0) return null
+            return maxOf(0L, size - n)..(size - 1)
+        }
+        val start = startText.toLongOrNull() ?: return null
+        if (start < 0 || start >= size) return null
+        val end = if (endText.isEmpty()) size - 1
+        else (endText.toLongOrNull() ?: return null).coerceAtMost(size - 1)
+        return if (end < start) null else start..end
+    }
+
     private fun xmlEscape(s: String): String =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
@@ -115,6 +148,55 @@ object VaultDav {
             </D:propstat>
           </D:response>
         """.trimIndent() + "\n"
+    }
+
+    /** Query that asks a folder for its machine-readable listing instead of HTML. */
+    const val JSON_QUERY = "format=json"
+
+    /**
+     * A folder listing as JSON, for our own client.
+     *
+     * PROPFIND is the right thing for a desktop mounting this as a drive, but it
+     * is unusable from [java.net.HttpURLConnection], which rejects any method
+     * outside its fixed list. Rather than hand-roll an HTTP client to send one
+     * verb, the app's own client asks for this over a plain GET.
+     */
+    fun jsonListing(index: VaultVolume.Index, dir: String): String {
+        val listing = VaultFs.listing(index, dir)
+        val sb = StringBuilder()
+        sb.append("{\"path\":\"").append(jsonEscape(VaultFs.normalize(dir))).append("\",\"items\":[")
+        var first = true
+        for (folder in listing.folders) {
+            if (!first) sb.append(',')
+            first = false
+            sb.append("{\"name\":\"").append(jsonEscape(VaultFs.baseName(folder)))
+                .append("\",\"path\":\"").append(jsonEscape(folder))
+                .append("\",\"folder\":true,\"size\":0}")
+        }
+        for (file in listing.files) {
+            if (!first) sb.append(',')
+            first = false
+            sb.append("{\"name\":\"").append(jsonEscape(file.name))
+                .append("\",\"path\":\"").append(jsonEscape(VaultFs.join(dir, file.name)))
+                .append("\",\"folder\":false,\"size\":").append(file.originalSize).append('}')
+        }
+        sb.append("]}")
+        return sb.toString()
+    }
+
+    private fun jsonEscape(s: String): String {
+        val sb = StringBuilder(s.length + 8)
+        for (c in s) {
+            when (c) {
+                '"' -> sb.append("\\\"")
+                '\\' -> sb.append("\\\\")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> if (c < ' ') sb.append("\\u%04x".format(c.code)) else sb.append(c)
+            }
+        }
+        return sb.toString()
     }
 
     /** A browsable HTML listing for a folder, so a plain browser works too. */

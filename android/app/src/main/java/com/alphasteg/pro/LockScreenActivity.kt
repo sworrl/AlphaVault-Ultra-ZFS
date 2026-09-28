@@ -19,7 +19,7 @@ import com.alphasteg.pro.security.SecurityManager
  * Hex-code lock screen. No biometric (Android can't bind a specific finger to
  * duress). Onboarding sets a master code and a distinct duress code, each at
  * least 8 hex digits and each entered twice to confirm. Entering the duress code
- * later wipes the vault. The keypad reshuffles once per screen by default, or
+ * later wipes the vault behind an ordinary-looking empty session. The keypad reshuffles once per screen by default, or
  * after every keypress if that option is enabled.
  */
 class LockScreenActivity : AppCompatActivity() {
@@ -35,13 +35,19 @@ class LockScreenActivity : AppCompatActivity() {
     private val hexButtons = mutableListOf<Button>()
     private var enteredPin = ""
 
-    private enum class Step { SETUP_MASTER, CONFIRM_MASTER, SETUP_DURESS, CONFIRM_DURESS, LOCKED }
+    /**
+     * WELCOME is where a fresh install starts. Setting this device up with its own
+     * vault is one option, not a toll gate: a code plus someone else's library is
+     * enough to open what is hidden in it, so onboarding is never forced.
+     */
+    private enum class Step { WELCOME, SETUP_MASTER, CONFIRM_MASTER, SETUP_DURESS, CONFIRM_DURESS, LOCKED }
     private var step = Step.LOCKED
     private var firstEntry = ""      // first entry of the code being confirmed
     private var pendingMaster = ""   // confirmed master, awaiting duress setup
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.alphasteg.pro.security.DuressWipe.resumeIfPending(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(false)
@@ -80,7 +86,7 @@ class LockScreenActivity : AppCompatActivity() {
         settings = AppSettings(this)
         setupKeypad()
 
-        step = if (securityManager.isVaultSetup()) Step.LOCKED else Step.SETUP_MASTER
+        step = if (securityManager.isVaultSetup()) Step.LOCKED else Step.WELCOME
         applyStep()
 
         btnSubmit.setOnClickListener { onSubmit() }
@@ -93,7 +99,7 @@ class LockScreenActivity : AppCompatActivity() {
                 text = "▶ DEV UNLOCK (seed + enter)"
                 setOnClickListener {
                     val key = com.alphasteg.pro.dev.DevSeed.provisionCredentials(securityManager)
-                    if (key.isNotEmpty()) proceedToMain(isDecoy = false, wipe = false, key = key)
+                    if (key.isNotEmpty()) proceedToMain(isDecoy = false, key = key)
                 }
             }
         }
@@ -107,6 +113,11 @@ class LockScreenActivity : AppCompatActivity() {
 
     private fun applyStep() {
         when (step) {
+            Step.WELCOME -> {
+                tvTitle.text = getString(R.string.lock_title_welcome)
+                tvStatus.text = getString(R.string.lock_status_welcome)
+                btnSubmit.text = getString(R.string.btn_setup_this_device)
+            }
             Step.SETUP_MASTER -> {
                 tvTitle.text = getString(R.string.lock_title_onboarding)
                 tvStatus.text = getString(R.string.lock_status_setup_master)
@@ -170,6 +181,12 @@ class LockScreenActivity : AppCompatActivity() {
 
     private fun onSubmit() {
         when (step) {
+            Step.WELCOME -> {
+                // Opting in to a local vault; the code typed so far is discarded so
+                // setup starts cleanly rather than half-filled.
+                step = Step.SETUP_MASTER
+                applyStep()
+            }
             Step.SETUP_MASTER -> {
                 if (!securityManager.isValidPin(enteredPin)) {
                     toast("Your Hex++ Code must be at least ${SecurityManager.MIN_LEN} characters.")
@@ -212,17 +229,20 @@ class LockScreenActivity : AppCompatActivity() {
                 }
                 securityManager.setupCredentials(pendingMaster, firstEntry)
                 toast("Vault created.")
-                proceedToMain(isDecoy = false, wipe = false, key = pendingMaster)
+                proceedToMain(isDecoy = false, key = pendingMaster)
             }
             Step.LOCKED -> {
                 if (enteredPin.isEmpty()) { toast("Enter your code"); return }
                 when (securityManager.verifyPin(enteredPin)) {
                     SecurityManager.AuthResult.SUCCESS_MASTER ->
-                        proceedToMain(isDecoy = false, wipe = false, key = enteredPin)
+                        proceedToMain(isDecoy = false, key = enteredPin)
                     SecurityManager.AuthResult.SUCCESS_DURESS -> {
-                        // Duress: destroy credentials, launch a wiping, empty-looking vault.
-                        securityManager.wipeCredentials()
-                        proceedToMain(isDecoy = true, wipe = true, key = enteredPin)
+                        // Duress: the duress code becomes the master, the wipe runs in the
+                        // background, and the session is an ordinary one keyed to a code
+                        // that owns nothing, so it shows a set-up vault that is empty.
+                        securityManager.adoptDuressAsMaster(enteredPin)
+                        com.alphasteg.pro.security.DuressWipe.begin(this)
+                        proceedToMain(isDecoy = false, key = enteredPin)
                     }
                     SecurityManager.AuthResult.INVALID -> {
                         toast("Invalid code")
@@ -235,16 +255,19 @@ class LockScreenActivity : AppCompatActivity() {
     }
 
     /**
-     * Open a vault that already exists on the current library/DAC using just its
-     * code, without local onboarding. No credentials are stored, so a fresh
-     * install can open a portable vault and leave no verifier behind.
+     * Open a library that already holds hidden files, using only its code.
+     *
+     * This is the guest path: no onboarding, no credentials written, no library of
+     * our own. The next screen asks which folder to read, so the library can be
+     * anyone's — a card out of a DAP, a folder copied off a NAS — and the session
+     * leaves nothing behind on this device.
      */
     private fun openExistingByCode() {
         if (!securityManager.isValidPin(enteredPin)) {
-            toast("Enter the vault code first (at least ${SecurityManager.MIN_LEN} characters).")
+            toast("Enter the library's code first (at least ${SecurityManager.MIN_LEN} characters).")
             return
         }
-        proceedToMain(isDecoy = false, wipe = false, key = enteredPin)
+        proceedToMain(isDecoy = false, key = enteredPin, guest = true)
     }
 
     private fun setupKeypad() {
@@ -287,11 +310,11 @@ class LockScreenActivity : AppCompatActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
-    private fun proceedToMain(isDecoy: Boolean, wipe: Boolean, key: String) {
+    private fun proceedToMain(isDecoy: Boolean, key: String, guest: Boolean = false) {
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra("EXTRA_DECOY_MODE", isDecoy)
-            putExtra("EXTRA_WIPE", wipe)
             putExtra("EXTRA_VAULT_KEY", key)
+            putExtra("EXTRA_GUEST", guest)
         }
         startActivity(intent)
         finish()

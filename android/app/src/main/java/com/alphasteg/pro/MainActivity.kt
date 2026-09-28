@@ -75,9 +75,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchServer: MaterialSwitch
     private lateinit var tvServerUrl: TextView
     private var webServer: com.alphasteg.pro.net.VaultWebServer? = null
+    private var beacon: com.alphasteg.pro.net.VaultBeacon? = null
 
     private var isDecoyMode = false
-    private var pendingWipe = false
     private var selectedCarrierUri: Uri? = null
     private var poolMode = RaidVaultEngine.PoolMode.AUTO_WHOLE_LIBRARY
 
@@ -107,6 +107,11 @@ class MainActivity : AppCompatActivity() {
     private var vaultCwd: String = "/"
     private var vaultDirty = false
     private var devSeedDone = false
+    private var legacyCheckStarted = false
+
+    // Multi-select in the vault list. Non-empty means selection mode: a tap toggles
+    // a file instead of opening its menu, and a bar offers bulk actions.
+    private val selectedIds = LinkedHashSet<String>()
 
     // Cascade password for vaulted files: ONLY the user's code, passed by the
     // lock screen or calculator. No default key ever, so nothing is encrypted
@@ -115,6 +120,16 @@ class MainActivity : AppCompatActivity() {
     private val vaultPassword: String by lazy {
         intent.getStringExtra("EXTRA_VAULT_KEY").orEmpty()
     }
+
+    /**
+     * A guest session reads a library this device does not own. Nothing is
+     * persisted — no track database, no credentials, no settings — and the
+     * library is opened read-only so someone else's tracks are never rewritten.
+     */
+    private val isGuest: Boolean by lazy { intent.getBooleanExtra("EXTRA_GUEST", false) }
+
+    /** The folder a guest session is reading. Null until one is chosen. */
+    private var guestLibraryRoot: java.io.File? = null
 
     private val requestAudioPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -170,7 +185,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         isDecoyMode = intent.getBooleanExtra("EXTRA_DECOY_MODE", false)
-        pendingWipe = intent.getBooleanExtra("EXTRA_WIPE", false)
 
         topBar = findViewById(R.id.topBar)
         tvModeBadge = findViewById(R.id.tvModeBadge)
@@ -207,6 +221,7 @@ class MainActivity : AppCompatActivity() {
         library = VaultLibrary(this)
         appSettings = com.alphasteg.pro.data.AppSettings(this)
         vaultVolume.carrierMethod = appSettings.carrierMethod
+        vaultVolume.onHiddenWrite = { com.alphasteg.pro.security.DuressWipe.markHiddenData(this) }
 
         findViewById<TextView>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
         findViewById<TextView>(R.id.tvVaultSort).apply {
@@ -226,6 +241,13 @@ class MainActivity : AppCompatActivity() {
         setupStegoInspector()
         setupWebSyncServer()
 
+        if (isGuest) {
+            // Nothing about this device's own library is loaded or touched; the
+            // session begins by asking which folder to read.
+            enterGuestMode()
+            return
+        }
+
         // Show whatever the library already knew, then sync in the background.
         val known = library.load().values.sortedBy { it.name.lowercase() }
         renderPoolDisks(known)
@@ -241,8 +263,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Catch tracks added or removed while the app was backgrounded.
-        if (!isDecoyMode && (hasAudioPermission() || hasAllFilesAccess())) {
+        // Catch tracks added or removed while the app was backgrounded. A guest
+        // session is skipped: syncLibrary writes the track database, and a guest
+        // must leave no record of the library it looked at.
+        if (!isDecoyMode && !isGuest && (hasAudioPermission() || hasAllFilesAccess())) {
             syncLibrary(userTriggered = false)
         }
     }
@@ -306,14 +330,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAdvancedOptions() {
-        val items = arrayOf("Hiding method", "Test security key (FIDO2)", "Check for updates")
+        val items = arrayOf(
+            "Hiding method",
+            "Open another library (read-only)",
+            "Open a vault over Wi-Fi",
+            "Test security key (FIDO2)",
+            "Check for updates"
+        )
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Advanced")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> showCarrierMethodDialog()
-                    1 -> testSecurityKey()
-                    2 -> checkForUpdate(manual = true)
+                    // Point this session at a library we do not own, using the code
+                    // already entered. Nothing about it is written down.
+                    1 -> pickStorageVolume { root ->
+                        showFolderPicker(root) { folder -> useGuestLibrary(folder) }
+                    }
+                    // The other half of Wi-Fi sync: read a vault a phone on this
+                    // network has unlocked, and play it through this device's DAC.
+                    2 -> connectToRemoteVault()
+                    3 -> testSecurityKey()
+                    4 -> checkForUpdate(manual = true)
                 }
             }
             .show()
@@ -473,13 +511,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * True when this session may not write, having warned the user. A guest is
+     * reading a library it does not own, so every path that would rewrite a
+     * carrier is refused rather than silently altering someone else's tracks.
+     */
+    private fun blockedForGuest(): Boolean {
+        if (!isGuest) return false
+        Toast.makeText(this, R.string.guest_readonly_notice, Toast.LENGTH_LONG).show()
+        return true
+    }
+
     private fun setupVaultActions() {
         btnAddVaultFile.setOnClickListener {
+            if (blockedForGuest()) return@setOnClickListener
             selectFilesToVaultLauncher.launch("*/*")
         }
 
-        // Manual sync: same reconciliation the app runs at startup.
+        // Manual sync: same reconciliation the app runs at startup. In a guest
+        // session it re-picks the folder instead, since there is no library of
+        // ours to reconcile against.
         btnScanVault.setOnClickListener {
+            if (isGuest) { promptForGuestLibrary(); return@setOnClickListener }
             when {
                 hasAllFilesAccess() -> syncLibrary(userTriggered = true)
                 hasAudioPermission() -> {
@@ -528,6 +581,283 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- reading a vault another device is serving over Wi-Fi ----------
+
+    /**
+     * Find vaults on the network and open one.
+     *
+     * This is the DAP's half of Wi-Fi sync: the phone holds the carriers and does
+     * the decryption, and this device - which has the DAC but not the storage -
+     * browses and plays what the phone has unlocked. Nothing is decrypted here.
+     */
+    private fun connectToRemoteVault() {
+        val found = LinkedHashMap<String, com.alphasteg.pro.net.VaultBeacon.Found>()
+        val scanner = com.alphasteg.pro.net.VaultBeacon(this)
+
+        val list = android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.remote_searching)
+            .setAdapter(list) { _, which ->
+                found.values.toList().getOrNull(which)?.let { promptRemoteToken(it) }
+            }
+            .setNeutralButton(R.string.remote_enter_manually) { _, _ -> promptRemoteAddress() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setOnDismissListener { scanner.stopDiscovery() }
+            .show()
+
+        scanner.discover { vault ->
+            runOnUiThread {
+                if (found.put(vault.url, vault) == null) {
+                    list.add("📡 ${vault.name}  (${vault.host})")
+                    list.notifyDataSetChanged()
+                    dialog.setTitle(getString(R.string.remote_found_count, found.size))
+                }
+            }
+        }
+    }
+
+    /** Fallback for networks where mDNS is blocked, which is common on guest Wi-Fi. */
+    private fun promptRemoteAddress() {
+        val input = android.widget.EditText(this).apply {
+            hint = "192.168.1.20:8973"
+            setSingleLine()
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.remote_enter_manually)
+            .setView(input)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val text = input.text.toString().trim().removePrefix("http://").trimEnd('/')
+                val host = text.substringBefore(':')
+                val port = text.substringAfter(':', "8973").toIntOrNull() ?: 8973
+                if (host.isNotEmpty()) {
+                    promptRemoteToken(com.alphasteg.pro.net.VaultBeacon.Found(host, host, port))
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun promptRemoteToken(vault: com.alphasteg.pro.net.VaultBeacon.Found) {
+        val input = android.widget.EditText(this).apply {
+            hint = getString(R.string.remote_token_hint)
+            setSingleLine()
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(vault.name)
+            .setMessage(getString(R.string.remote_token_message, vault.url))
+            .setView(input)
+            .setPositiveButton(R.string.remote_connect) { _, _ ->
+                openRemoteVault(
+                    com.alphasteg.pro.net.RemoteVault(vault.host, vault.port, input.text.toString().trim()),
+                    "/"
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Browse one folder of a remote vault, recursing as folders are tapped. */
+    private fun openRemoteVault(remote: com.alphasteg.pro.net.RemoteVault, path: String) {
+        Toast.makeText(this, R.string.remote_loading, Toast.LENGTH_SHORT).show()
+        Thread {
+            val items = remote.list(path)
+            val reachable = items.isNotEmpty() || remote.canConnect()
+            runOnUiThread {
+                if (!reachable) {
+                    Toast.makeText(this, R.string.remote_rejected, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val labels = items.map {
+                    if (it.isFolder) "📁 ${it.name}" else "🔐 ${it.name}  (${formatSize(it.size)})"
+                }.toTypedArray()
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle(if (path == "/") getString(R.string.remote_title) else path)
+                    .setItems(labels) { _, which ->
+                        val item = items[which]
+                        if (item.isFolder) openRemoteVault(remote, item.path)
+                        else fetchRemoteFile(remote, item)
+                    }
+                    .setNeutralButton(R.string.guest_pick_up) { _, _ ->
+                        if (path != "/") openRemoteVault(remote, path.substringBeforeLast('/').ifEmpty { "/" })
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }.start()
+    }
+
+    /**
+     * Pull one file down and open it in the secure viewer, so it plays through
+     * this device's DAC without ever being written to disk.
+     */
+    private fun fetchRemoteFile(
+        remote: com.alphasteg.pro.net.RemoteVault,
+        item: com.alphasteg.pro.net.RemoteVault.Item
+    ) {
+        Toast.makeText(this, getString(R.string.remote_fetching, item.name), Toast.LENGTH_SHORT).show()
+        Thread {
+            val buffer = java.io.ByteArrayOutputStream()
+            val ok = remote.fetch(item.path, buffer)
+            runOnUiThread {
+                if (!ok) {
+                    Toast.makeText(this, R.string.remote_fetch_failed, Toast.LENGTH_LONG).show()
+                } else {
+                    VaultViewerActivity.show(this, item.name, buffer.toByteArray())
+                }
+            }
+        }.start()
+    }
+
+    // ---------- guest sessions: reading a library this device does not own ----------
+
+    /**
+     * Start a guest session: badge the screen, drop every control that could write
+     * to the library, and ask which folder to read. No track database is loaded or
+     * saved, so nothing records that this library was ever opened.
+     */
+    private fun enterGuestMode() {
+        tvModeBadge.text = getString(R.string.badge_guest)
+        tvModeBadge.setTextColor(ContextCompat.getColor(this, R.color.av_cyan))
+        btnAddVaultFile.visibility = View.GONE
+        rgPoolMode.visibility = View.GONE
+        tvEmptyVault.text = getString(R.string.vault_empty_guest)
+        tvVaultStats.text = getString(R.string.guest_readonly_notice)
+        tvEmptyDisks.text = getString(R.string.guest_pick_message)
+        promptForGuestLibrary()
+    }
+
+    /**
+     * Ask for the library folder. Reading someone else's music needs broad file
+     * access, so that is requested first if it is missing.
+     */
+    private fun promptForGuestLibrary() {
+        if (!hasAllFilesAccess() && !hasAudioPermission()) {
+            requestAudioPermLauncher.launch(audioPermission())
+        }
+        pickStorageVolume { root -> showFolderPicker(root) { folder -> useGuestLibrary(folder) } }
+    }
+
+    /**
+     * Mounted volumes worth offering as a library root.
+     *
+     * Removable media is the interesting entry: a card pulled out of a DAP and put
+     * in a USB-C reader mounts as ordinary storage with real paths, so the vault
+     * engine reads it exactly as it reads internal storage. (A DAP connected
+     * directly over USB does not help — Android speaks MTP there, and has no MTP
+     * host stack.)
+     */
+    private fun storageRoots(): List<Pair<String, java.io.File>> {
+        val roots = LinkedHashMap<String, java.io.File>()
+        Environment.getExternalStorageDirectory()?.takeIf { it.canRead() }?.let {
+            roots["Internal storage"] = it
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val sm = getSystemService(android.os.storage.StorageManager::class.java)
+            for (volume in sm?.storageVolumes.orEmpty()) {
+                val dir = volume.directory ?: continue
+                if (!dir.canRead()) continue
+                val label = volume.getDescription(this) ?: dir.name
+                val name = if (volume.isRemovable) "$label (removable)" else label
+                if (!roots.containsValue(dir)) roots[name] = dir
+            }
+        }
+        // Media mounted after boot can be readable here even when the volume API
+        // does not describe it, so fall back to what is actually on the filesystem.
+        runCatching {
+            java.io.File("/storage").listFiles()?.forEach { f ->
+                if (f.isDirectory && f.canRead() && f.name != "emulated" && f.name != "self" &&
+                    !roots.containsValue(f)
+                ) {
+                    roots[f.name] = f
+                }
+            }
+        }
+        return roots.map { it.key to it.value }
+    }
+
+    /** Offer the mounted volumes, skipping the step when there is only one. */
+    private fun pickStorageVolume(onPick: (java.io.File) -> Unit) {
+        val roots = storageRoots()
+        if (roots.size <= 1) {
+            onPick(roots.firstOrNull()?.second ?: Environment.getExternalStorageDirectory())
+            return
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.guest_pick_volume_title)
+            .setItems(roots.map { "💾 ${it.first}" }.toTypedArray()) { _, which ->
+                onPick(roots[which].second)
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                if (isGuest && guestLibraryRoot == null) finish()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /**
+     * Walk the filesystem to choose a carrier folder. Each level is its own dialog,
+     * titled with the path and how many carriers are under it, so the right folder
+     * is recognisable before committing to it.
+     */
+    private fun showFolderPicker(dir: java.io.File, onPick: (java.io.File) -> Unit) {
+        val actions = ArrayList<Pair<String, () -> Unit>>()
+        dir.parentFile?.let { parent ->
+            if (parent.canRead()) actions.add(getString(R.string.guest_pick_up) to { showFolderPicker(parent, onPick) })
+        }
+        for (sub in com.alphasteg.pro.data.LibraryScanner.subfolders(dir)) {
+            actions.add("📁 ${sub.name}" to { showFolderPicker(sub, onPick) })
+        }
+
+        // Shallow preview: deep enough to see album subfolders, cheap enough that
+        // browsing stays responsive on a slow device.
+        val preview = com.alphasteg.pro.data.LibraryScanner.preview(dir, maxDepth = 3)
+        val summary = if (preview.isUsable) {
+            getString(R.string.guest_pick_summary, preview.carriers, formatSize(preview.totalBytes))
+        } else {
+            getString(R.string.guest_pick_empty)
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("${dir.absolutePath}\n$summary")
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
+            .setPositiveButton(R.string.guest_pick_use) { _, _ ->
+                if (preview.isUsable) onPick(dir)
+                else {
+                    Toast.makeText(this, R.string.guest_pick_empty, Toast.LENGTH_SHORT).show()
+                    showFolderPicker(dir, onPick)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                if (isGuest && guestLibraryRoot == null) finish()
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /** Adopt [root] as the pool for this session only, then look for hidden files. */
+    private fun useGuestLibrary(root: java.io.File) {
+        Toast.makeText(this, R.string.guest_probing, Toast.LENGTH_SHORT).show()
+        Thread {
+            val carriers = com.alphasteg.pro.data.LibraryScanner.scan(root)
+            runOnUiThread {
+                if (carriers.isEmpty()) {
+                    Toast.makeText(this, R.string.guest_pick_empty, Toast.LENGTH_LONG).show()
+                    promptForGuestLibrary()
+                    return@runOnUiThread
+                }
+                guestLibraryRoot = root
+                currentPool = carriers
+                trackCount = carriers.size
+                poolBytes = carriers.sumOf { it.length() }
+                renderPoolDisks(carriers.map { FlacTrack(it.absolutePath, it.name, it.length()) })
+                updateStorageBar(poolBytes, trackCount)
+                tvVaultStats.text = getString(R.string.vault_stats_guest, trackCount)
+                // refreshVaultUi only reads; a guest never has pending edits to flush.
+                refreshVaultUi()
+            }
+        }.start()
+    }
+
     private fun autoSyncOnStartup() {
         if (isDecoyMode) return
         when {
@@ -549,11 +879,6 @@ class MainActivity : AppCompatActivity() {
                 trackCount = result.tracks.size
                 poolBytes = result.totalBytes
                 currentPool = pool
-                if (pendingWipe) {
-                    pendingWipe = false
-                    val wipePool = pool
-                    Thread { runCatching { vaultVolume.wipeAll(wipePool) } }.start()
-                }
                 renderPoolDisks(result.tracks)
                 updateStorageBar(result.totalBytes, result.tracks.size)
                 refreshVaultUi()
@@ -800,7 +1125,13 @@ class MainActivity : AppCompatActivity() {
                 webServer = server
                 val svc = Intent(this, VaultService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc) else startService(svc)
-                tvServerUrl.text = "Mount / browse (read-only):\nhttp://$ip:${server.port}/\nUser: vault    Password: $token\n\nStops when the vault locks."
+                // Announce on the network so a player does not need the address typed
+                // into it. The token is never advertised, so the beacon reveals that a
+                // vault is being served and nothing more.
+                beacon = com.alphasteg.pro.net.VaultBeacon(this).also {
+                    it.advertise("AlphaVault on ${Build.MODEL}", server.port)
+                }
+                tvServerUrl.text = "Mount / browse (read-only):\nhttp://$ip:${server.port}/\nUser: vault    Password: $token\n\nVisible on this network as \"AlphaVault on ${Build.MODEL}\".\nStops when the vault locks."
             }
             .onFailure {
                 switchServer.isChecked = false
@@ -809,6 +1140,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopNetworkDrive() {
+        // The beacon must not outlive the server it points at.
+        beacon?.stopAdvertising(); beacon = null
         webServer?.stop(); webServer = null
         runCatching { stopService(Intent(this, VaultService::class.java)) }
         tvServerUrl.text = getString(R.string.server_status_stopped)
@@ -828,7 +1161,9 @@ class MainActivity : AppCompatActivity() {
     /** After unlock and a pool sync, offer to move or copy any shared files into the vault. */
     private fun maybeHandlePendingShare() {
         val items = PendingShare.items
-        if (items.isEmpty() || isDecoyMode) return
+        // A guest session never writes, so shared files are left pending rather
+        // than pushed into a library that is not ours.
+        if (items.isEmpty() || isDecoyMode || isGuest) return
         if (vaultPassword.isBlank()) return
         if (currentPool.isEmpty()) {
             Toast.makeText(this, "Grant All-files access and sync so there are carriers to vault into.", Toast.LENGTH_LONG).show()
@@ -887,6 +1222,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Vault one or many picked files as a batch, reading each in turn to stay memory-light. */
     private fun vaultUris(uris: List<Uri>, move: Boolean) {
+        if (blockedForGuest()) return
         if (vaultPassword.isBlank()) {
             Toast.makeText(this, "Vault is locked. Unlock with your code first.", Toast.LENGTH_LONG).show()
             return
@@ -993,6 +1329,30 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    /**
+     * Files vaulted by builds before the framed cascade (AVMAX768) open, but each
+     * costs a full key stretch and blocks nothing from improving. Re-seal them in
+     * the current format once, in the background, keeping their folders and tags.
+     */
+    private fun maybeUpgradeLegacy(pool: List<java.io.File>, index: VaultVolume.Index) {
+        if (isGuest || isDecoyMode || legacyCheckStarted || appSettings.legacyFormatChecked) return
+        if (index.entries.isEmpty() || pool.isEmpty()) return
+        legacyCheckStarted = true
+        val key = vaultPassword
+        Thread {
+            val legacy = runCatching { vaultVolume.legacyEntries(pool, key) }.getOrNull() ?: return@Thread
+            runOnUiThread {
+                if (legacy.isEmpty()) { appSettings.legacyFormatChecked = true; return@runOnUiThread }
+                runVaultOperation("Updating vault format", pool, key, onSuccess = {
+                    appSettings.legacyFormatChecked = true
+                }) { progress ->
+                    val n = vaultVolume.upgradeLegacy(pool, key, progress)
+                    "Updated $n file${if (n == 1) "" else "s"} to the current format."
+                }
+            }
+        }.start()
+    }
+
     private fun displayNameOf(uri: Uri): String {
         contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { c ->
@@ -1031,12 +1391,24 @@ class MainActivity : AppCompatActivity() {
             val snapshot = vaultIndex.copy(generation = vaultIndex.generation + 1)
             vaultIndex = snapshot
             vaultDirty = false
-            Thread { runCatching { vaultVolume.commitIndex(snapshot, pool, vaultPassword) } }.start()
+            Thread {
+                runCatching { vaultVolume.commitIndex(snapshot, pool, vaultPassword) }
+                // Only after the flush has used it: derived key material must not
+                // outlive the on-screen session.
+                CryptoEngine.clearKeyCache()
+            }.start()
+        } else {
+            CryptoEngine.clearKeyCache()
         }
     }
 
     override fun onBackPressed() {
-        // In the vault, Back walks up the folder tree before leaving the screen.
+        // In the vault, Back first leaves selection mode, then walks up the folder
+        // tree before leaving the screen.
+        if (::panelVault.isInitialized && panelVault.visibility == View.VISIBLE && selectedIds.isNotEmpty()) {
+            clearSelection()
+            return
+        }
         if (::panelVault.isInitialized && panelVault.visibility == View.VISIBLE && vaultCwd != "/") {
             openFolder(VaultFs.parent(vaultCwd))
             return
@@ -1078,6 +1450,8 @@ class MainActivity : AppCompatActivity() {
                 renderCurrentFolder()
                 updateStorageBar(poolBytes, trackCount)
 
+                maybeUpgradeLegacy(pool, index)
+
                 // Dev flavor: seed a sample vault once, when carriers exist but the
                 // vault is empty, so the screens have content for screenshots.
                 if (BuildConfig.IS_DEV && !devSeedDone && currentPool.isNotEmpty() && index.entries.isEmpty()) {
@@ -1110,7 +1484,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         vaultFileList.addView(buildBreadcrumbRow())
-        vaultFileList.addView(buildNewFolderRow())
+        selectedIds.retainAll(vaultIndex.entries.map { it.fileId }.toSet())
+        if (selectedIds.isNotEmpty()) vaultFileList.addView(buildSelectionBar(files))
+        else vaultFileList.addView(buildNewFolderRow())
         for (folder in listing.folders) vaultFileList.addView(buildFolderRow(folder))
         for (e in files) vaultFileList.addView(buildVaultedRow(e))
 
@@ -1369,23 +1745,28 @@ class MainActivity : AppCompatActivity() {
         // A user color label, if set, overrides the type color for the accent.
         val accent = if (file.colorLabel != 0) file.colorLabel else typeKind.color
         val kind = FileKind(typeKind.emoji, accent)
+        val selected = file.fileId in selectedIds
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(12), dp(14), dp(12))
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dp(14).toFloat()
-                setColor(0xFF0C1322.toInt())
-                setStroke(dp(1) + 1, kind.color)
+                setColor(if (selected) 0xFF16304A.toInt() else 0xFF0C1322.toInt())
+                setStroke(if (selected) dp(3) else dp(1) + 1, if (selected) 0xFF00F2FE.toInt() else kind.color)
             }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(8) }
-            setOnClickListener { showVaultedFileMenu(file) }
+            setOnClickListener {
+                if (selectedIds.isNotEmpty()) toggleSelected(file) else showVaultedFileMenu(file)
+            }
+            // A guest must leave the library untouched, so there is nothing to bulk-act on.
+            if (!isGuest) setOnLongClickListener { toggleSelected(file); true }
         }
 
         val badge = TextView(this).apply {
-            text = kind.emoji
+            text = if (selected) "✓" else kind.emoji
             textSize = 20f
             gravity = Gravity.CENTER
             val s = dp(44)
@@ -1428,22 +1809,185 @@ class MainActivity : AppCompatActivity() {
         return row
     }
 
+    private fun toggleSelected(file: VaultVolume.Entry) {
+        if (!selectedIds.remove(file.fileId)) selectedIds.add(file.fileId)
+        renderCurrentFolder()
+    }
+
+    private fun clearSelection() {
+        selectedIds.clear()
+        renderCurrentFolder()
+    }
+
+    /** Bulk-action bar shown in place of "New folder" while files are selected. */
+    private fun buildSelectionBar(visibleFiles: List<VaultVolume.Entry>): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(6), dp(6), dp(6))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(0xFF10263D.toInt())
+                setStroke(dp(1) + 1, 0xFF00F2FE.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        bar.addView(TextView(this).apply {
+            text = "${selectedIds.size} selected"
+            setTextColor(0xFFEAF2FF.toInt()); textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        fun action(label: String, color: Int, onClick: () -> Unit) = TextView(this).apply {
+            text = label; setTextColor(color); textSize = 14f
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener { onClick() }
+        }
+        val allHere = visibleFiles.isNotEmpty() && visibleFiles.all { it.fileId in selectedIds }
+        bar.addView(action(if (allHere) "None" else "All", 0xFF9FB2CC.toInt()) {
+            if (allHere) visibleFiles.forEach { selectedIds.remove(it.fileId) }
+            else visibleFiles.forEach { selectedIds.add(it.fileId) }
+            renderCurrentFolder()
+        })
+        bar.addView(action("Move", 0xFFFFD93D.toInt()) { moveSelected() })
+        bar.addView(action("Delete", 0xFFFF5D5D.toInt()) { confirmDeleteSelected() })
+        bar.addView(action("✕", 0xFF9FB2CC.toInt()) { clearSelection() })
+        return bar
+    }
+
+    /** Moving is an index edit, like a single move: no chunk is touched. */
+    private fun moveSelected() {
+        val ids = selectedIds.toSet()
+        pickFolder("Move ${ids.size} file${if (ids.size == 1) "" else "s"} into…") { dest ->
+            for (id in ids) vaultIndex = VaultFs.move(vaultIndex, id, dest)
+            vaultDirty = true
+            selectedIds.clear()
+            renderCurrentFolder()
+            Toast.makeText(this, "Moved ${ids.size} to ${if (dest == "/") "Vault" else VaultFs.baseName(dest)}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun confirmDeleteSelected() {
+        val ids = selectedIds.toSet()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Delete ${ids.size} file${if (ids.size == 1) "" else "s"}")
+            .setMessage("Remove them from the carriers? This cannot be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                selectedIds.clear()
+                runVaultOperation("Deleting ${ids.size} files", currentPool, vaultPassword) { progress ->
+                    vaultVolume.deleteAll(ids, vaultPassword, currentPool, progress)
+                    "Deleted ${ids.size} file${if (ids.size == 1) "" else "s"}."
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun showVaultedFileMenu(file: VaultVolume.Entry) {
-        val options = arrayOf("View in app", "Move to…", "Rename", "Set color label", "Edit tags", "Restore to Downloads", "Delete from vault")
+        // A guest is reading someone else's library, so only the actions that
+        // leave it untouched are offered.
+        val options = if (isGuest) {
+            arrayOf("View in app", "Play on…", "Restore to Downloads")
+        } else {
+            arrayOf(
+                "View in app", "Play on…", "Move to…", "Rename", "Set color label",
+                "Edit tags", "Restore to Downloads", "Delete from vault"
+            )
+        }
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(file.name)
             .setItems(options) { _, which ->
+                if (isGuest) {
+                    when (which) {
+                        0 -> viewVaultedFile(file)
+                        1 -> castVaultedFile(file)
+                        2 -> restoreVaultedFile(file)
+                    }
+                    return@setItems
+                }
                 when (which) {
                     0 -> viewVaultedFile(file)
-                    1 -> moveFileTo(file)
-                    2 -> renameVaultedFile(file)
-                    3 -> pickColorLabel(file)
-                    4 -> editTags(file)
-                    5 -> restoreVaultedFile(file)
-                    6 -> confirmDeleteVaulted(file)
+                    1 -> castVaultedFile(file)
+                    2 -> moveFileTo(file)
+                    3 -> renameVaultedFile(file)
+                    4 -> pickColorLabel(file)
+                    5 -> editTags(file)
+                    6 -> restoreVaultedFile(file)
+                    7 -> confirmDeleteVaulted(file)
                 }
             }
             .show()
+    }
+
+    /**
+     * Push a vaulted file to a DLNA renderer on the LAN — the untethered way to
+     * hear it on a DAP, as opposed to plugging the DAC in over USB.
+     *
+     * The renderer is handed a self-authenticating URL scoped to this one file
+     * (see [com.alphasteg.pro.net.CastGrants]) because a renderer will not send
+     * HTTP Basic credentials. Note this streams the decrypted file over plain
+     * HTTP on the local network; the USB path keeps plaintext off the wire.
+     */
+    private fun castVaultedFile(file: VaultVolume.Entry) {
+        val server = webServer
+        if (server == null) {
+            Toast.makeText(this, R.string.cast_needs_server, Toast.LENGTH_LONG).show()
+            return
+        }
+        val ip = wifiIpv4()
+        if (ip == null) {
+            Toast.makeText(this, "Join a Wi-Fi network first.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val contentType = com.alphasteg.pro.net.VaultDav.contentType(file.name)
+        val grant = server.grants.issue(file.fileId, file.name, contentType)
+        val url = "http://$ip:${server.port}/cast/${grant.token}/${Uri.encode(file.name)}"
+
+        Toast.makeText(this, R.string.cast_searching, Toast.LENGTH_SHORT).show()
+        Thread {
+            val renderers = com.alphasteg.pro.net.DlnaCaster.discover()
+            runOnUiThread {
+                if (renderers.isEmpty()) {
+                    server.grants.revoke(grant.token)
+                    Toast.makeText(this, R.string.cast_none_found, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                val labels = renderers.map { r ->
+                    if (r.host.isEmpty()) r.name else "${r.name}  (${r.host})"
+                }.toTypedArray()
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle(getString(R.string.cast_to_renderer))
+                    .setItems(labels) { _, which ->
+                        val target = renderers[which]
+                        Thread {
+                            val result = com.alphasteg.pro.net.DlnaCaster.cast(
+                                target, url, file.name, contentType, file.originalSize
+                            )
+                            runOnUiThread {
+                                result
+                                    .onSuccess {
+                                        Toast.makeText(
+                                            this, getString(R.string.cast_sent, target.name), Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                    .onFailure { e ->
+                                        server.grants.revoke(grant.token)
+                                        Toast.makeText(
+                                            this,
+                                            getString(R.string.cast_failed, target.name, e.message ?: "unknown error"),
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                            }
+                        }.start()
+                    }
+                    .setOnCancelListener { server.grants.revoke(grant.token) }
+                    .show()
+            }
+        }.start()
     }
 
     /** Move a file into another folder. Metadata only: no re-encryption, no chunk I/O. */
@@ -1533,12 +2077,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restoreVaultedFile(file: VaultVolume.Entry) {
-        val pool = currentPool
         Thread {
             val result = runCatching {
-                val (name, plain) = vaultVolume.restore(file.fileId, vaultPassword, pool)
-                writeToDownloads(name, plain)
-                name
+                // Decrypt straight into the Downloads entry rather than into a
+                // ByteArray first: on a small-heap device the extra full-size copy
+                // is the difference between a big file restoring and failing.
+                restoreToDownloads(file)
             }
             runOnUiThread {
                 result.onSuccess { name ->
@@ -1561,9 +2105,15 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun writeToDownloads(name: String, bytes: ByteArray) {
+    /**
+     * Restore a vaulted file directly into a Downloads entry, streaming the
+     * plaintext frame by frame so it never exists in memory as a whole. Returns
+     * the restored name. The entry stays IS_PENDING until the write completes, so
+     * a failure part-way leaves no half-written file visible.
+     */
+    private fun restoreToDownloads(file: VaultVolume.Entry): String {
         val values = android.content.ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.DISPLAY_NAME, file.name)
             put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Downloads.IS_PENDING, 1)
@@ -1576,12 +2126,20 @@ class MainActivity : AppCompatActivity() {
         }
         val uri = contentResolver.insert(collection, values)
             ?: throw IllegalStateException("Could not create Downloads entry")
-        contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+        try {
+            val out = contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("Could not open Downloads entry for writing")
+            out.use { vaultVolume.restoreTo(file.fileId, vaultPassword, currentPool, it) }
+        } catch (e: Throwable) {
+            runCatching { contentResolver.delete(uri, null, null) }
+            throw e
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             contentResolver.update(uri, values, null, null)
         }
+        return file.name
     }
 
     private fun inspectTrack(uri: Uri) {

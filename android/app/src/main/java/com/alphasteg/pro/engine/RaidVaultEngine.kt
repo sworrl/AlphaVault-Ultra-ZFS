@@ -31,6 +31,56 @@ object RaidVaultEngine {
         val fileId: String
     )
 
+    /** Baseline shape when the library is small: 4 data + 2 parity, mirrored. */
+    const val DEFAULT_DATA_CHUNKS = 4
+    private const val MIN_DATA_CHUNKS = 2      // RAID-Z2 needs at least two data chunks
+    private const val MAX_DATA_CHUNKS = 512    // bounds embed work on enormous libraries
+
+    /**
+     * The most carriers one file may be spread over.
+     *
+     * A carrier embed rewrites the whole FLAC, so this is a work budget, not a
+     * style preference. At ~50 MB a track, 64 carriers is about 6 GB of read and
+     * write for one vaulted file — already slow on an SD card. Asking for half of
+     * an 18,000-track library instead would be ~9,000 carriers and ~880 GB, hours
+     * of work and a great deal of flash wear to store one document.
+     *
+     * Library-wide spread is achieved across the vault instead, by rotating where
+     * each file starts; see [com.alphasteg.pro.data.CarrierPlacement].
+     */
+    const val MAX_CARRIERS_PER_FILE = 64
+
+    /**
+     * How many data chunks to split a file into, given a pool of [poolSize] carriers.
+     *
+     * A file becomes `n` data chunks plus 2 parity chunks, and every chunk is
+     * mirrored to a hot spare, so it occupies `2 * (n + 2)` carriers. On a small
+     * library that can reasonably be a large share of it; on a big one the share
+     * has to fall, because the work is proportional to carriers touched and not to
+     * the size of the thing being hidden.
+     *
+     * So this aims at [minCoverage] of the pool but yields to
+     * [MAX_CARRIERS_PER_FILE], and is clamped so it never asks for more carriers
+     * than exist nor drops below a usable RAID-Z2 shape.
+     */
+    fun dataChunksFor(
+        poolSize: Int,
+        minCoverage: Double = 0.5,
+        maxCarriers: Int = MAX_CARRIERS_PER_FILE
+    ): Int {
+        if (poolSize <= 0) return DEFAULT_DATA_CHUNKS
+        val targetCarriers = minOf(Math.ceil(poolSize * minCoverage).toInt(), maxCarriers)
+        val fromCoverage = Math.ceil(targetCarriers / 2.0).toInt() - 2
+        val fitsPool = poolSize / 2 - 2
+        return fromCoverage
+            .coerceAtLeast(DEFAULT_DATA_CHUNKS)
+            .coerceAtMost(maxOf(MIN_DATA_CHUNKS, fitsPool))
+            .coerceAtMost(MAX_DATA_CHUNKS)
+    }
+
+    /** Carriers a file of [dataChunks] data chunks will occupy, hot spares included. */
+    fun carriersUsedFor(dataChunks: Int): Int = 2 * (dataChunks + 2)
+
     fun encodeRaidZ2WithHotSpares(
         fileBytes: ByteArray,
         numDataChunks: Int = 4,
@@ -38,13 +88,17 @@ object RaidVaultEngine {
     ): RaidZ2Result {
         val totalLen = fileBytes.size
         val chunkSize = maxOf(1, (totalLen + numDataChunks - 1) / numDataChunks)
-        val paddedLen = chunkSize * numDataChunks
 
-        val padded = ByteArray(paddedLen)
-        System.arraycopy(fileBytes, 0, padded, 0, totalLen)
-
+        // Slice straight out of fileBytes. Materialising a zero-padded copy of the
+        // whole payload first would add another full-size array to peak memory,
+        // which on a small-heap device is the difference between vaulting a file
+        // and running out. Only the tail chunk carries padding.
         val dataChunks = Array(numDataChunks) { i ->
-            padded.copyOfRange(i * chunkSize, (i + 1) * chunkSize)
+            val start = i * chunkSize
+            val take = (totalLen - start).coerceIn(0, chunkSize)
+            ByteArray(chunkSize).also {
+                if (take > 0) System.arraycopy(fileBytes, start, it, 0, take)
+            }
         }
 
         val parityP = computeP(dataChunks, chunkSize)
@@ -66,7 +120,13 @@ object RaidVaultEngine {
                         chunkIndex = primaryCount + i,
                         isParity = orig.isParity,
                         isHotSpare = true,
-                        data = orig.data.copyOf()
+                        // A hot spare is byte-identical to what it mirrors, and chunk
+                        // data is only ever read from here on — each chunk is copied
+                        // into a carrier payload, never modified in place. Sharing the
+                        // array instead of duplicating it halves the memory this
+                        // function needs. Anything that starts mutating chunk data
+                        // must copy first.
+                        data = orig.data
                     )
                 )
             }
@@ -96,6 +156,34 @@ object RaidVaultEngine {
      * is taken from its primary or its hot-spare mirror; up to two data chunks
      * missing from BOTH are rebuilt from the P and Q parity by real RS recovery.
      */
+    /**
+     * Read the payload without rebuilding it, when every data chunk survived.
+     *
+     * In the ordinary case nothing has been lost and the payload is simply the
+     * data chunks in order — parity is never consulted. Joining them into one
+     * array would double peak memory for no benefit, so this hands back a view
+     * over the chunks as they already sit in memory.
+     *
+     * Returns null when a data chunk is missing, meaning parity repair is needed
+     * and the caller should fall back to [reconstructRaidZ2].
+     */
+    fun sourceIfIntact(
+        availableChunks: Map<Int, ByteArray>,
+        totalLen: Int,
+        chunkSize: Int,
+        numDataChunks: Int = DEFAULT_DATA_CHUNKS
+    ): ByteSource? {
+        val mirrorOffset = numDataChunks + 2
+        val ordered = ArrayList<ByteArray>(numDataChunks)
+        for (i in 0 until numDataChunks) {
+            val chunk = availableChunks[i] ?: availableChunks[i + mirrorOffset] ?: return null
+            if (chunk.size != chunkSize) return null
+            ordered.add(chunk)
+        }
+        if (totalLen.toLong() > ordered.size.toLong() * chunkSize) return null
+        return StripedSource(ordered, chunkSize, totalLen.toLong())
+    }
+
     fun reconstructRaidZ2(
         availableChunks: Map<Int, ByteArray>,
         totalLen: Int,

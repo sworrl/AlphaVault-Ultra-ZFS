@@ -63,9 +63,16 @@ class VaultVolume {
      */
     var carrierMethod: com.alphasteg.pro.data.CarrierMethod = com.alphasteg.pro.data.CarrierMethod.METADATA
 
+    /**
+     * Called when hidden-audio data is known to exist: on every LSB write, and on
+     * unlocking a non-empty LSB vault. The duress wipe reads the flag this sets to
+     * decide whether it must scrub the audio, which it cannot locate without the code.
+     */
+    var onHiddenWrite: (() -> Unit)? = null
+
     private fun engine(password: String): com.alphasteg.pro.engine.CarrierEngine =
         if (carrierMethod == com.alphasteg.pro.data.CarrierMethod.LSB)
-            com.alphasteg.pro.engine.LsbCarrierEngine(password)
+            com.alphasteg.pro.engine.LsbCarrierEngine(password, onHiddenWrite)
         else com.alphasteg.pro.engine.MetadataCarrierEngine
 
     // ---------- index ----------
@@ -75,16 +82,26 @@ class VaultVolume {
         // read only those on unlock instead of scanning the whole library. Falls
         // back to a full scan when the pool has changed since the last save (the
         // replica set moved) or on first run.
-        scanForIndex(spreadCarriers(REPLICAS, pool), password)?.let { return it }
-        return scanForIndex(pool, password) ?: Index(0, emptyList())
+        // The full scan tries the cheap metadata pass over every carrier before
+        // paying for an audio decode of each one.
+        val index = scanForIndex(spreadCarriers(REPLICAS, pool), password)
+            ?: scanForIndex(pool, password, audio = false)
+            ?: scanForIndex(pool, password) ?: Index(0, emptyList())
+        if (index.entries.isNotEmpty() && carrierMethod == com.alphasteg.pro.data.CarrierMethod.LSB) {
+            onHiddenWrite?.invoke()
+        }
+        return index
     }
 
+    /** The carriers that hold the index replicas; the duress wipe erases these first. */
+    fun indexCarriers(pool: List<File>): List<File> = spreadCarriers(REPLICAS, pool)
+
     /** Highest-generation index this password can decrypt among [carriers], or null. */
-    private fun scanForIndex(carriers: List<File>, password: String): Index? {
+    private fun scanForIndex(carriers: List<File>, password: String, audio: Boolean = true): Index? {
         val candidates = parallelMap(carriers) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap null
             var best: Pair<Long, Index>? = null
-            for (payload in extractOrEmpty(f, password)) {
+            for (payload in extractOrEmpty(f, password, audio)) {
                 val blob = VaultCodec.decodeIndex(payload) ?: continue
                 if (!blob.crcOk) continue
                 if (best != null && blob.generation <= best!!.first) continue
@@ -161,7 +178,12 @@ class VaultVolume {
         progress.update(0, 100, "Encrypting ${name}…")
         val encrypted = CryptoEngine.encryptPayload(data, password)
         progress.update(5, 100, "Splitting into RAID chunks…")
-        val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(encrypted, DATA_CHUNKS, true)
+        // Sized from the library but capped: a carrier embed rewrites the whole
+        // FLAC, so the work is proportional to carriers touched. Library-wide
+        // spread comes from rotating placement per file, not from one file
+        // covering half of a 900 GB collection.
+        val dataChunks = RaidVaultEngine.dataChunksFor(pool.size)
+        val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(encrypted, dataChunks, true)
         val fileId = raid.fileId
 
         // LSB holds one payload per carrier, so each chunk needs its own carrier.
@@ -170,7 +192,7 @@ class VaultVolume {
                 "The hidden-audio (LSB) method needs at least ${raid.chunks.size} FLAC tracks for this file."
             }
         }
-        val carriers = assignChunkCarriers(raid.chunks, pool)
+        val carriers = CarrierPlacement.assign(raid.chunks, pool, fileId)
         val eng = engine(password)
         // Total steps ~ number of chunk embeds + an index-save step.
         val total = raid.chunks.size + 1
@@ -179,7 +201,7 @@ class VaultVolume {
             if (FlacCarrierEngine.isFlacFile(carrier)) {
                 val payload = VaultCodec.encodeChunk(
                     fileId, chunk.chunkIndex, raid.chunks.size,
-                    raid.chunkSize, raid.totalLength, DATA_CHUNKS, chunk.data
+                    raid.chunkSize, raid.totalLength, dataChunks, chunk.data
                 )
                 runCatching { eng.embed(carrier, payload) }
             }
@@ -188,7 +210,7 @@ class VaultVolume {
 
         val entry = Entry(
             fileId, name, data.size.toLong(), raid.chunks.size,
-            raid.chunkSize, raid.totalLength, DATA_CHUNKS, createdAt
+            raid.chunkSize, raid.totalLength, dataChunks, createdAt
         )
         val current = loadIndex(pool, password)
         saveIndex(
@@ -208,10 +230,22 @@ class VaultVolume {
     fun commitIndex(index: Index, pool: List<File>, password: String, progress: Progress = noProgress) =
         saveIndex(index, pool, password, progress, 0, 1)
 
-    private fun gatherChunks(fileId: String, expectedCount: Int, pool: List<File>, password: String): Map<Int, ByteArray> {
+    /**
+     * Collect whatever chunks of [fileId] the pool still holds. Missing ones are
+     * simply absent from the result; RAID reconstruction decides whether enough
+     * survived, which is why no expected count is needed here.
+     */
+    private fun gatherChunks(fileId: String, pool: List<File>, password: String): Map<Int, ByteArray> =
+        // A file's chunks are all written one way, so metadata blocks found means
+        // there is no need to decode the audio of every other track.
+        gatherChunks(fileId, pool, password, audio = false).ifEmpty {
+            gatherChunks(fileId, pool, password, audio = true)
+        }
+
+    private fun gatherChunks(fileId: String, pool: List<File>, password: String, audio: Boolean): Map<Int, ByteArray> {
         val perFile = parallelMap(pool) { f ->
             if (!FlacCarrierEngine.isFlacFile(f)) return@parallelMap emptyList<Pair<Int, ByteArray>>()
-            extractOrEmpty(f, password).mapNotNull { payload ->
+            extractOrEmpty(f, password, audio).mapNotNull { payload ->
                 val c = VaultCodec.decodeChunk(payload) ?: return@mapNotNull null
                 if (c.fileId != fileId || !c.crcOk) null else c.index to c.data
             }
@@ -223,15 +257,91 @@ class VaultVolume {
 
     @JvmOverloads
     fun restore(fileId: String, password: String, pool: List<File>, progress: Progress = noProgress): Pair<String, ByteArray> {
+        val out = java.io.ByteArrayOutputStream()
+        val name = restoreTo(fileId, password, pool, out, progress)
+        return name to out.toByteArray()
+    }
+
+    /**
+     * Restore a vaulted file straight into [sink], returning its name.
+     *
+     * Prefer this whenever the plaintext is headed somewhere other than memory —
+     * an export to disk, a socket serving the network drive. The chunk map is
+     * released before decryption starts and the cascade is decrypted a frame at a
+     * time, so a large file is never held in full more than once. [restore] is the
+     * same path with a memory sink, for callers that genuinely need the bytes.
+     */
+    @JvmOverloads
+    fun restoreTo(
+        fileId: String,
+        password: String,
+        pool: List<File>,
+        sink: java.io.OutputStream,
+        progress: Progress = noProgress
+    ): String {
         val entry = loadIndex(pool, password).entries.firstOrNull { it.fileId == fileId }
             ?: throw IllegalStateException("Vaulted file not found in volume index.")
         progress.update(1, 3, "Gathering chunks from carriers…")
-        val chunks = gatherChunks(fileId, entry.chunkCount, pool, password)
+        val chunks = gatherChunks(fileId, pool, password)
         progress.update(2, 3, "Reconstructing and decrypting…")
-        val encrypted = RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
-        val plain = CryptoEngine.decryptPayload(encrypted, password)
+
+        // Nothing lost is the ordinary case, and then the payload is just the data
+        // chunks in order — decrypt straight out of them rather than joining them
+        // into a second full-size copy first. Only a genuine loss pays for a
+        // rebuild, and only then does peak memory double.
+        val intact = RaidVaultEngine.sourceIfIntact(
+            chunks, entry.totalLen, entry.chunkSize, entry.numData
+        )
+        val source = intact ?: com.alphasteg.pro.engine.ArraySource(
+            RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
+        )
+        CryptoEngine.decryptTo(source, password, sink)
+        sink.flush()
         progress.update(3, 3, "Done.")
-        return entry.name to plain
+        return entry.name
+    }
+
+    /**
+     * Re-seal every file still in the legacy AVMAX768 envelope in the current
+     * framed format, keeping its name, date, folder, tags and color, then drop the
+     * old chunks. The index is rewritten in the current format along the way, so
+     * unlock stops paying a full key stretch per legacy replica. Returns the number
+     * of files upgraded; zero means nothing was legacy and nothing was written.
+     */
+    @JvmOverloads
+    fun upgradeLegacy(pool: List<File>, password: String, progress: Progress = noProgress): Int {
+        val legacy = legacyEntries(pool, password)
+        legacy.forEachIndexed { i, old ->
+            progress.update(i, legacy.size, "Upgrading ${old.name}…")
+            val (_, data) = restore(old.fileId, password, pool)
+            val fresh = vault(old.name, data, password, pool, old.createdAt)
+            delete(old.fileId, password, pool)
+            val index = loadIndex(pool, password)
+            commitIndex(
+                index.copy(
+                    generation = index.generation + 1,
+                    entries = index.entries.map {
+                        if (it.fileId != fresh.fileId) it
+                        else it.copy(colorLabel = old.colorLabel, tags = old.tags, path = old.path)
+                    }
+                ),
+                pool, password
+            )
+        }
+        progress.update(legacy.size, legacy.size, "Done.")
+        return legacy.size
+    }
+
+    /** Entries still sealed in the legacy AVMAX768 envelope. */
+    fun legacyEntries(pool: List<File>, password: String): List<Entry> =
+        loadIndex(pool, password).entries.filter { runCatching { isLegacyEntry(it, pool, password) }.getOrDefault(false) }
+
+    private fun isLegacyEntry(entry: Entry, pool: List<File>, password: String): Boolean {
+        val chunks = gatherChunks(entry.fileId, pool, password)
+        val head = RaidVaultEngine.sourceIfIntact(chunks, entry.totalLen, entry.chunkSize, entry.numData)
+            ?.slice(0, 8)
+            ?: RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData).copyOf(8)
+        return CryptoEngine.isLegacyEnvelope(head)
     }
 
     fun scrub(pool: List<File>, password: String): ScrubReport {
@@ -239,14 +349,16 @@ class VaultVolume {
         var healed = 0
         val unrecoverable = ArrayList<String>()
         for (entry in index.entries) {
-            val chunks = gatherChunks(entry.fileId, entry.chunkCount, pool, password)
+            val chunks = gatherChunks(entry.fileId, pool, password)
             if (chunks.size >= entry.chunkCount) continue
             val rebuilt = runCatching {
                 RaidVaultEngine.reconstructRaidZ2(chunks, entry.totalLen, entry.chunkSize, entry.numData)
             }.getOrNull()
             if (rebuilt == null) { unrecoverable.add(entry.name); continue }
             val raid = RaidVaultEngine.encodeRaidZ2WithHotSpares(rebuilt, entry.numData, true)
-            val carriers = assignChunkCarriers(raid.chunks, pool)
+            // The existing id, not the freshly generated one, so a heal lands on the
+            // same rotation the file was originally written to.
+            val carriers = CarrierPlacement.assign(raid.chunks, pool, entry.fileId)
             raid.chunks.forEachIndexed { i, chunk ->
                 val carrier = carriers[i]
                 if (!FlacCarrierEngine.isFlacFile(carrier)) return@forEachIndexed
@@ -289,27 +401,28 @@ class VaultVolume {
         saveIndex(current.copy(generation = current.generation + 1, entries = updated), pool, password, noProgress, 0, 1)
     }
 
-    fun delete(fileId: String, password: String, pool: List<File>) {
+    fun delete(fileId: String, password: String, pool: List<File>) = deleteAll(setOf(fileId), password, pool)
+
+    /**
+     * Delete several files in one pass: each carrier is rewritten at most once and
+     * the index is saved once, rather than a full-library pass per file.
+     */
+    @JvmOverloads
+    fun deleteAll(fileIds: Set<String>, password: String, pool: List<File>, progress: Progress = noProgress) {
+        if (fileIds.isEmpty()) return
         val eng = engine(password)
-        for (f in pool) {
-            if (!FlacCarrierEngine.isFlacFile(f)) continue
+        pool.forEachIndexed { i, f ->
+            progress.update(i, pool.size + 1, "Removing chunks from ${f.name}…")
+            if (!FlacCarrierEngine.isFlacFile(f)) return@forEachIndexed
             runCatching {
-                eng.removeMatching(f) { p -> VaultCodec.decodeChunk(p)?.fileId == fileId }
+                eng.removeMatching(f) { p -> VaultCodec.decodeChunk(p)?.fileId in fileIds }
             }
         }
         val current = loadIndex(pool, password)
         saveIndex(
-            current.copy(generation = current.generation + 1, entries = current.entries.filterNot { it.fileId == fileId }),
-            pool, password, noProgress, 0, 1
+            current.copy(generation = current.generation + 1, entries = current.entries.filterNot { it.fileId in fileIds }),
+            pool, password, progress, pool.size, pool.size + 1
         )
-    }
-
-    /** Duress wipe: strip every AlphaVault block (index and chunks) from all carriers. */
-    fun wipeAll(pool: List<File>) {
-        for (f in pool) {
-            if (!FlacCarrierEngine.isFlacFile(f)) continue
-            runCatching { FlacCarrierEngine.removeMatchingInFile(f) { true } }
-        }
     }
 
     fun usageBytes(pool: List<File>, password: String): Long =
@@ -324,38 +437,6 @@ class VaultVolume {
      * Place each RAID chunk so a chunk and its hot-spare mirror land in different
      * album folders; deleting or swapping one album then can't remove both copies.
      */
-    private fun assignChunkCarriers(
-        chunks: List<RaidVaultEngine.VaultChunkInfo>, pool: List<File>
-    ): List<File> {
-        if (pool.isEmpty()) return emptyList()
-        val byFolder = LinkedHashMap<String, ArrayDeque<File>>()
-        for (f in pool.sortedBy { it.absolutePath }) {
-            byFolder.getOrPut(f.parentFile?.name ?: "") { ArrayDeque() }.add(f)
-        }
-        val folderNames = byFolder.keys.toList()
-        val folderCount = folderNames.size.coerceAtLeast(1)
-        val primaryCount = chunks.count { !it.isHotSpare }.coerceAtLeast(1)
-
-        fun pullPreferring(folder: Int): File? {
-            for (off in 0 until folderCount) {
-                val q = byFolder[folderNames[(folder + off) % folderCount]]
-                if (q != null && q.isNotEmpty()) return q.removeFirst()
-            }
-            return null
-        }
-
-        val result = arrayOfNulls<File>(chunks.size)
-        chunks.forEachIndexed { i, c ->
-            val idx = c.chunkIndex
-            val preferred = if (idx < primaryCount) idx % folderCount
-            else ((idx - primaryCount) % folderCount + 1) % folderCount
-            result[i] = pullPreferring(preferred)
-        }
-        val used = result.filterNotNull()
-        val fallback = used.ifEmpty { pool }
-        for (i in result.indices) if (result[i] == null) result[i] = fallback[i % fallback.size]
-        return result.map { it!! }
-    }
 
     private fun spreadCarriers(n: Int, pool: List<File>): List<File> {
         if (pool.isEmpty()) return emptyList()
@@ -418,11 +499,19 @@ class VaultVolume {
         return Index(generation, entries, folders)
     }
 
-    private fun extractOrEmpty(file: File, password: String): List<ByteArray> =
-        runCatching { engine(password).extractAll(file) }.getOrDefault(emptyList())
+    /**
+     * Metadata blocks first (cheap, and what older libraries used), then the LSB
+     * plane when hidden mode is selected, so a library written either way opens.
+     */
+    private fun extractOrEmpty(file: File, password: String, audio: Boolean = true): List<ByteArray> {
+        val meta = com.alphasteg.pro.engine.MetadataCarrierEngine.extractAll(file)
+        if (meta.isNotEmpty() || !audio || carrierMethod != com.alphasteg.pro.data.CarrierMethod.LSB) return meta
+        return runCatching { engine(password).extractAll(file) }.getOrDefault(emptyList())
+    }
 
     companion object {
-        const val DATA_CHUNKS = 4
+        // The data-chunk count is no longer fixed; it scales with the pool via
+        // RaidVaultEngine.dataChunksFor, and each entry records the value it used.
         const val REPLICAS = 4
     }
 }
