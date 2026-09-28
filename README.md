@@ -12,21 +12,24 @@ Android app under `android/` is new and does not use the server.
 
 ## Screenshots
 
-The vault and disk screens below are the dev build running on an emulator with a
-synthetic library, so no real data is shown. The lock screen is a device capture.
+All captures are the dev build on an emulator with a synthetic 22-track library,
+so no real data is shown.
 
-| Onboarding | Vault (folders) | In a folder |
+| Welcome | Locked | Vault |
 |---|---|---|
-| ![Hex++ keypad, each character its own color](docs/screenshots/dev-01-onboarding.png) | ![Vault root showing Documents and Photos folders](docs/screenshots/dev-03-vault-root.png) | ![Inside a folder: breadcrumb, files with chunk counts, and a treemap](docs/screenshots/dev-04-folder.png) |
+| ![Welcome screen: Hex++ keypad, each character its own color](docs/screenshots/welcome.png) | ![Locked: the same keypad, shuffled](docs/screenshots/lock.png) | ![Vault root with Documents and Photos folders](docs/screenshots/vault-root.png) |
 
-| Disks | Lock screen |
-|---|---|
-| ![RAID-Z2 pool, partition bar, and a treemap of the FLAC carriers by album](docs/screenshots/dev-02-disks.png) | ![Locked hex-plus-symbol keypad with open-existing-vault link](docs/screenshots/01-lock.png) |
+| In a folder | Multi-select | Disks |
+|---|---|---|
+| ![Inside a folder: breadcrumb, files with chunk counts, and a treemap](docs/screenshots/folder.png) | ![Two files selected, with the None, Move, and Delete bar](docs/screenshots/multiselect.png) | ![RAID-Z2 pool, partition bar, and a treemap of the FLAC carriers by album](docs/screenshots/disks.png) |
 
-Onboarding: the Hex++ keypad (0-9, a-f, and symbols), each character its own
-color. Vault: the library as a browsable filesystem, with folders you navigate by
+Welcome: a fresh install, where a code either opens a library that already holds
+hidden files or sets this device up with its own vault. Locked: the Hex++ keypad
+(0-9, a-f, and symbols), each character its own color, shuffled on every visit.
+Vault: the library as a browsable filesystem, with folders you navigate by
 breadcrumb; opening one lists its files (size and chunk count) over a treemap of
-that folder. Disks: the whole-library RAID-Z2 pool, a GParted-style partition bar
+that folder. Multi-select: long-press a file, tap more, then move or delete them
+all at once. Disks: the whole-library RAID-Z2 pool, a GParted-style partition bar
 for device/pool/vault/free, and a WinDirStat-style treemap of the carriers colored
 by album.
 

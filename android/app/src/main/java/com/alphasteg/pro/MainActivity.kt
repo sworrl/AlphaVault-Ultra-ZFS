@@ -386,7 +386,7 @@ class MainActivity : AppCompatActivity() {
                     val hex = enrollment.kek.take(6).joinToString("") { "%02x".format(it) }
                     android.util.Log.i("AlphaVaultFIDO", "enroll ok kek=$hex stable=$stable credId=${enrollment.credentialId.size}B")
                     runOnUiThread {
-                        Toast.makeText(this, if (stable) "Security key OK — KEK $hex… (stable)" else "KEK not stable!", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, if (stable) "Security key OK, KEK $hex… (stable)" else "KEK not stable!", Toast.LENGTH_LONG).show()
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("AlphaVaultFIDO", "fido test failed", e)
@@ -400,13 +400,14 @@ class MainActivity : AppCompatActivity() {
 
     /** Choose how new files are hidden in the FLACs, with the trade-off spelled out. */
     private fun showCarrierMethodDialog() {
-        val methods = com.alphasteg.pro.data.CarrierMethod.entries.toTypedArray()
+        // The default first.
+        val methods = arrayOf(com.alphasteg.pro.data.CarrierMethod.METADATA, com.alphasteg.pro.data.CarrierMethod.LSB)
         val current = appSettings.carrierMethod
         val labels = methods.map { m ->
             val detail = if (m.hidden)
                 "Hidden in the audio itself. A metadata scan of the FLAC finds nothing; the bits are keyed to your code and read as noise. Modifies the audio inaudibly and re-encodes it."
             else
-                "Stored in FLAC metadata blocks. The audio stays byte-identical and it is fast, but any FLAC parser can see the blocks exist — the vault's presence is detectable. Content stays encrypted."
+                "Stored in FLAC metadata blocks. The audio stays byte-identical and it is fast, but any FLAC parser can see the blocks exist, so the vault's presence is detectable. Content stays encrypted."
             "${m.label}\n$detail"
         }.toTypedArray()
         androidx.appcompat.app.AlertDialog.Builder(this)
