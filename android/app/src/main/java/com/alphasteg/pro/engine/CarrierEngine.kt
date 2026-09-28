@@ -39,7 +39,10 @@ object MetadataCarrierEngine : CarrierEngine {
  * single payload keyed to [code], so the vault assigns one chunk or one index
  * replica per LSB carrier.
  */
-class LsbCarrierEngine(private val code: String) : CarrierEngine {
+class LsbCarrierEngine(
+    private val code: String,
+    private val onWrite: (() -> Unit)? = null
+) : CarrierEngine {
 
     override fun isCarrier(file: File) = FlacCarrierEngine.isFlacFile(file)
 
@@ -51,6 +54,7 @@ class LsbCarrierEngine(private val code: String) : CarrierEngine {
     override fun embed(file: File, payload: ByteArray) {
         val pcm = FlacTranscoder.decode(file)
         LsbStego.embed(pcm.samples, payload, code) // throws if the carrier is too short
+        onWrite?.invoke()
         writeBack(file, pcm)
     }
 
@@ -63,18 +67,32 @@ class LsbCarrierEngine(private val code: String) : CarrierEngine {
         return true
     }
 
-    private fun writeBack(file: File, pcm: FlacTranscoder.Pcm) {
-        val tmp = File(file.parentFile, file.name + ".avtmp")
-        tmp.outputStream().use { FlacTranscoder.encode(pcm, it) }
-        if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
-    }
+    companion object {
+        /**
+         * Randomize every sample LSB of [file] without knowing any code. The duress
+         * path uses this: it holds only the duress code, so it cannot find a keyed
+         * payload and must erase the LSB plane of each carrier that might hold one.
+         */
+        fun scrub(file: File): Boolean {
+            val pcm = runCatching { FlacTranscoder.decode(file) }.getOrNull() ?: return false
+            scrubLsbs(pcm.samples)
+            writeBack(file, pcm)
+            return true
+        }
 
-    private fun scrubLsbs(samples: ShortArray) {
-        val rnd = java.security.SecureRandom()
-        val bits = ByteArray((samples.size + 7) / 8).also { rnd.nextBytes(it) }
-        for (i in samples.indices) {
-            val bit = (bits[i / 8].toInt() ushr (i % 8)) and 1
-            samples[i] = ((samples[i].toInt() and 0xFFFE) or bit).toShort()
+        private fun writeBack(file: File, pcm: FlacTranscoder.Pcm) {
+            val tmp = File(file.parentFile, file.name + ".avtmp")
+            tmp.outputStream().use { FlacTranscoder.encode(pcm, it) }
+            if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+        }
+
+        private fun scrubLsbs(samples: ShortArray) {
+            val rnd = java.security.SecureRandom()
+            val bits = ByteArray((samples.size + 7) / 8).also { rnd.nextBytes(it) }
+            for (i in samples.indices) {
+                val bit = (bits[i / 8].toInt() ushr (i % 8)) and 1
+                samples[i] = ((samples[i].toInt() and 0xFFFE) or bit).toShort()
+            }
         }
     }
 }

@@ -78,7 +78,6 @@ class MainActivity : AppCompatActivity() {
     private var beacon: com.alphasteg.pro.net.VaultBeacon? = null
 
     private var isDecoyMode = false
-    private var pendingWipe = false
     private var selectedCarrierUri: Uri? = null
     private var poolMode = RaidVaultEngine.PoolMode.AUTO_WHOLE_LIBRARY
 
@@ -108,6 +107,11 @@ class MainActivity : AppCompatActivity() {
     private var vaultCwd: String = "/"
     private var vaultDirty = false
     private var devSeedDone = false
+    private var legacyCheckStarted = false
+
+    // Multi-select in the vault list. Non-empty means selection mode: a tap toggles
+    // a file instead of opening its menu, and a bar offers bulk actions.
+    private val selectedIds = LinkedHashSet<String>()
 
     // Cascade password for vaulted files: ONLY the user's code, passed by the
     // lock screen or calculator. No default key ever, so nothing is encrypted
@@ -181,7 +185,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         isDecoyMode = intent.getBooleanExtra("EXTRA_DECOY_MODE", false)
-        pendingWipe = intent.getBooleanExtra("EXTRA_WIPE", false)
 
         topBar = findViewById(R.id.topBar)
         tvModeBadge = findViewById(R.id.tvModeBadge)
@@ -218,6 +221,7 @@ class MainActivity : AppCompatActivity() {
         library = VaultLibrary(this)
         appSettings = com.alphasteg.pro.data.AppSettings(this)
         vaultVolume.carrierMethod = appSettings.carrierMethod
+        vaultVolume.onHiddenWrite = { com.alphasteg.pro.security.DuressWipe.markHiddenData(this) }
 
         findViewById<TextView>(R.id.btnSettings).setOnClickListener { showSettingsDialog() }
         findViewById<TextView>(R.id.tvVaultSort).apply {
@@ -875,11 +879,6 @@ class MainActivity : AppCompatActivity() {
                 trackCount = result.tracks.size
                 poolBytes = result.totalBytes
                 currentPool = pool
-                if (pendingWipe) {
-                    pendingWipe = false
-                    val wipePool = pool
-                    Thread { runCatching { vaultVolume.wipeAll(wipePool) } }.start()
-                }
                 renderPoolDisks(result.tracks)
                 updateStorageBar(result.totalBytes, result.tracks.size)
                 refreshVaultUi()
@@ -1330,6 +1329,30 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    /**
+     * Files vaulted by builds before the framed cascade (AVMAX768) open, but each
+     * costs a full key stretch and blocks nothing from improving. Re-seal them in
+     * the current format once, in the background, keeping their folders and tags.
+     */
+    private fun maybeUpgradeLegacy(pool: List<java.io.File>, index: VaultVolume.Index) {
+        if (isGuest || isDecoyMode || legacyCheckStarted || appSettings.legacyFormatChecked) return
+        if (index.entries.isEmpty() || pool.isEmpty()) return
+        legacyCheckStarted = true
+        val key = vaultPassword
+        Thread {
+            val legacy = runCatching { vaultVolume.legacyEntries(pool, key) }.getOrNull() ?: return@Thread
+            runOnUiThread {
+                if (legacy.isEmpty()) { appSettings.legacyFormatChecked = true; return@runOnUiThread }
+                runVaultOperation("Updating vault format", pool, key, onSuccess = {
+                    appSettings.legacyFormatChecked = true
+                }) { progress ->
+                    val n = vaultVolume.upgradeLegacy(pool, key, progress)
+                    "Updated $n file${if (n == 1) "" else "s"} to the current format."
+                }
+            }
+        }.start()
+    }
+
     private fun displayNameOf(uri: Uri): String {
         contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { c ->
@@ -1380,7 +1403,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        // In the vault, Back walks up the folder tree before leaving the screen.
+        // In the vault, Back first leaves selection mode, then walks up the folder
+        // tree before leaving the screen.
+        if (::panelVault.isInitialized && panelVault.visibility == View.VISIBLE && selectedIds.isNotEmpty()) {
+            clearSelection()
+            return
+        }
         if (::panelVault.isInitialized && panelVault.visibility == View.VISIBLE && vaultCwd != "/") {
             openFolder(VaultFs.parent(vaultCwd))
             return
@@ -1422,6 +1450,8 @@ class MainActivity : AppCompatActivity() {
                 renderCurrentFolder()
                 updateStorageBar(poolBytes, trackCount)
 
+                maybeUpgradeLegacy(pool, index)
+
                 // Dev flavor: seed a sample vault once, when carriers exist but the
                 // vault is empty, so the screens have content for screenshots.
                 if (BuildConfig.IS_DEV && !devSeedDone && currentPool.isNotEmpty() && index.entries.isEmpty()) {
@@ -1454,7 +1484,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         vaultFileList.addView(buildBreadcrumbRow())
-        vaultFileList.addView(buildNewFolderRow())
+        selectedIds.retainAll(vaultIndex.entries.map { it.fileId }.toSet())
+        if (selectedIds.isNotEmpty()) vaultFileList.addView(buildSelectionBar(files))
+        else vaultFileList.addView(buildNewFolderRow())
         for (folder in listing.folders) vaultFileList.addView(buildFolderRow(folder))
         for (e in files) vaultFileList.addView(buildVaultedRow(e))
 
@@ -1713,23 +1745,28 @@ class MainActivity : AppCompatActivity() {
         // A user color label, if set, overrides the type color for the accent.
         val accent = if (file.colorLabel != 0) file.colorLabel else typeKind.color
         val kind = FileKind(typeKind.emoji, accent)
+        val selected = file.fileId in selectedIds
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(12), dp(14), dp(12))
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dp(14).toFloat()
-                setColor(0xFF0C1322.toInt())
-                setStroke(dp(1) + 1, kind.color)
+                setColor(if (selected) 0xFF16304A.toInt() else 0xFF0C1322.toInt())
+                setStroke(if (selected) dp(3) else dp(1) + 1, if (selected) 0xFF00F2FE.toInt() else kind.color)
             }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(8) }
-            setOnClickListener { showVaultedFileMenu(file) }
+            setOnClickListener {
+                if (selectedIds.isNotEmpty()) toggleSelected(file) else showVaultedFileMenu(file)
+            }
+            // A guest must leave the library untouched, so there is nothing to bulk-act on.
+            if (!isGuest) setOnLongClickListener { toggleSelected(file); true }
         }
 
         val badge = TextView(this).apply {
-            text = kind.emoji
+            text = if (selected) "✓" else kind.emoji
             textSize = 20f
             gravity = Gravity.CENTER
             val s = dp(44)
@@ -1770,6 +1807,82 @@ class MainActivity : AppCompatActivity() {
         row.addView(badge)
         row.addView(col)
         return row
+    }
+
+    private fun toggleSelected(file: VaultVolume.Entry) {
+        if (!selectedIds.remove(file.fileId)) selectedIds.add(file.fileId)
+        renderCurrentFolder()
+    }
+
+    private fun clearSelection() {
+        selectedIds.clear()
+        renderCurrentFolder()
+    }
+
+    /** Bulk-action bar shown in place of "New folder" while files are selected. */
+    private fun buildSelectionBar(visibleFiles: List<VaultVolume.Entry>): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(6), dp(6), dp(6))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(0xFF10263D.toInt())
+                setStroke(dp(1) + 1, 0xFF00F2FE.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+        bar.addView(TextView(this).apply {
+            text = "${selectedIds.size} selected"
+            setTextColor(0xFFEAF2FF.toInt()); textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        fun action(label: String, color: Int, onClick: () -> Unit) = TextView(this).apply {
+            text = label; setTextColor(color); textSize = 14f
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener { onClick() }
+        }
+        val allHere = visibleFiles.isNotEmpty() && visibleFiles.all { it.fileId in selectedIds }
+        bar.addView(action(if (allHere) "None" else "All", 0xFF9FB2CC.toInt()) {
+            if (allHere) visibleFiles.forEach { selectedIds.remove(it.fileId) }
+            else visibleFiles.forEach { selectedIds.add(it.fileId) }
+            renderCurrentFolder()
+        })
+        bar.addView(action("Move", 0xFFFFD93D.toInt()) { moveSelected() })
+        bar.addView(action("Delete", 0xFFFF5D5D.toInt()) { confirmDeleteSelected() })
+        bar.addView(action("✕", 0xFF9FB2CC.toInt()) { clearSelection() })
+        return bar
+    }
+
+    /** Moving is an index edit, like a single move: no chunk is touched. */
+    private fun moveSelected() {
+        val ids = selectedIds.toSet()
+        pickFolder("Move ${ids.size} file${if (ids.size == 1) "" else "s"} into…") { dest ->
+            for (id in ids) vaultIndex = VaultFs.move(vaultIndex, id, dest)
+            vaultDirty = true
+            selectedIds.clear()
+            renderCurrentFolder()
+            Toast.makeText(this, "Moved ${ids.size} to ${if (dest == "/") "Vault" else VaultFs.baseName(dest)}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun confirmDeleteSelected() {
+        val ids = selectedIds.toSet()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Delete ${ids.size} file${if (ids.size == 1) "" else "s"}")
+            .setMessage("Remove them from the carriers? This cannot be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                selectedIds.clear()
+                runVaultOperation("Deleting ${ids.size} files", currentPool, vaultPassword) { progress ->
+                    vaultVolume.deleteAll(ids, vaultPassword, currentPool, progress)
+                    "Deleted ${ids.size} file${if (ids.size == 1) "" else "s"}."
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showVaultedFileMenu(file: VaultVolume.Entry) {

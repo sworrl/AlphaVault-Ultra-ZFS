@@ -156,4 +156,58 @@ class VaultVolumeTest {
         // A different password cannot decrypt the index, so it reads as empty.
         assertEquals(0, vol.list(pool, "wrong-pin").size)
     }
+
+    /**
+     * A vault written by the Aug 10, 2026 builds (AVMAX768 chunks and index) opens,
+     * upgrades in place to the current format, and keeps its folder, tags and color.
+     */
+    @Test
+    fun legacyVaultUpgradesInPlace() {
+        val pool = buildPool()
+        val vol = VaultVolume()
+        val secret = "field notes from before the format change".toByteArray()
+
+        val raid = com.alphasteg.pro.engine.RaidVaultEngine.encodeRaidZ2WithHotSpares(
+            LegacyEnvelope.seal(secret, password), 4, true
+        )
+        raid.chunks.forEachIndexed { i, c ->
+            FlacCarrierEngine.embedIntoFile(pool[i], com.alphasteg.pro.data.VaultCodec.encodeChunk(
+                raid.fileId, c.chunkIndex, raid.chunks.size, raid.chunkSize, raid.totalLength, 4, c.data
+            ))
+        }
+        val entry = org.json.JSONObject()
+            .put("fileId", raid.fileId).put("name", "notes.txt").put("originalSize", secret.size.toLong())
+            .put("chunkCount", raid.chunks.size).put("chunkSize", raid.chunkSize)
+            .put("totalLen", raid.totalLength).put("numData", 4).put("createdAt", 500L)
+            .put("colorLabel", 0x7F00FF00).put("tags", org.json.JSONArray(listOf("source")))
+            .put("path", "/docs")
+        val json = org.json.JSONObject().put("generation", 1L)
+            .put("entries", org.json.JSONArray().put(entry))
+            .put("folders", org.json.JSONArray(listOf("/docs")))
+        val index = com.alphasteg.pro.data.VaultCodec.encodeIndex(
+            1L, LegacyEnvelope.seal(json.toString().toByteArray(), password)
+        )
+        for (f in vol.indexCarriers(pool)) FlacCarrierEngine.embedIntoFile(f, index)
+
+        assertEquals(1, vol.legacyEntries(pool, password).size)
+        assertEquals(1, vol.upgradeLegacy(pool, password))
+        assertTrue(vol.legacyEntries(pool, password).isEmpty())
+
+        val listed = vol.list(pool, password).single()
+        assertEquals("notes.txt", listed.name)
+        assertEquals("/docs", listed.path)
+        assertEquals(listOf("source"), listed.tags)
+        assertEquals(0x7F00FF00, listed.colorLabel)
+        assertEquals(500L, listed.createdAt)
+        assertArrayEquals(secret, vol.restore(listed.fileId, password, pool).second)
+
+        // Nothing in the old envelope is left in any carrier.
+        val legacyMagic = "AVMAX768".toByteArray()
+        for (f in pool) for (p in FlacCarrierEngine.extractAllFromFile(f)) {
+            val body = com.alphasteg.pro.data.VaultCodec.decodeIndex(p)?.encBody
+                ?: com.alphasteg.pro.data.VaultCodec.decodeChunk(p)?.takeIf { it.index == 0 }?.data
+                ?: continue
+            assertTrue(!body.copyOf(8).contentEquals(legacyMagic))
+        }
+    }
 }

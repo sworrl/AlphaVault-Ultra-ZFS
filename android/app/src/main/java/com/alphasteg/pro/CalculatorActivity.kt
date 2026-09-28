@@ -45,6 +45,7 @@ class CalculatorActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.alphasteg.pro.security.DuressWipe.resumeIfPending(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         security = SecurityManager(this)
 
@@ -179,11 +180,13 @@ class CalculatorActivity : AppCompatActivity() {
 
     private fun unlock(match: SecurityManager.Match) {
         val duress = match.result == SecurityManager.AuthResult.SUCCESS_DURESS
-        if (duress) security.wipeCredentials()
+        if (duress) {
+            // See LockScreenActivity: an ordinary, empty session; the wipe runs behind it.
+            security.adoptDuressAsMaster(match.code)
+            com.alphasteg.pro.security.DuressWipe.begin(this)
+        }
         startActivity(
             Intent(this, MainActivity::class.java).apply {
-                putExtra("EXTRA_DECOY_MODE", duress)
-                putExtra("EXTRA_WIPE", duress)
                 putExtra("EXTRA_VAULT_KEY", match.code)
             }
         )
