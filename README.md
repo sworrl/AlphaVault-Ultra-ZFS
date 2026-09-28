@@ -32,7 +32,7 @@ by album.
 
 ## Status
 
-Verified by 21 unit tests and by hand on a Pixel 10 Pro XL (Android 14). Items
+Verified by 174 unit tests and by hand on a Pixel 10 Pro XL (Android 17). Items
 under "not verified" have code but have not been run end to end.
 
 Working and tested:
@@ -54,12 +54,20 @@ Working and tested:
   screenshot-blocked window; no bytes leave the app.
 - Multi-select batch vaulting; "Move to Vault" / "Copy to Vault" from the share
   sheet; rename, sort, tag, and color-label vaulted files.
+- Multi-select in the vault list: long-press a file to start selecting, then tap
+  to add or drop files. The bar at the top does All/None, Move, and Delete. Move is
+  an index edit only. Delete removes every selected file in one pass, so each
+  carrier is rewritten at most once and the index is saved once.
+- Vaults written by the Aug 10, 2026 builds (the `AVMAX768` envelope) still open,
+  and are re-sealed in the current format once, in the background, after the
+  first unlock. Name, date, folder, tags, and color carry over. Tested by building
+  an old-format vault in a unit test, and by hand on a real one on the Pixel.
 - Open an existing vault by code from the lock screen, with no local onboarding,
   so a fresh install opens a portable vault without storing a verifier.
 - Carrier scans on unlock (index load, chunk gather, usage) run across the FLAC
   files in parallel, which shortens the wait before the vault list appears.
 - Lock screen: hex-plus-symbol codes (8+ chars), master and duress codes each set
-  twice at onboarding; the duress code wipes credentials and clears the carriers.
+  twice at onboarding. See Flows for what the duress code does.
 - Calculator disguise: the launcher becomes a working scientific calculator, and
   entering the code in it unlocks the app.
 
@@ -67,22 +75,34 @@ Not verified end to end:
 
 - The picker-to-vault-to-view flow on hardware (the pieces are tested; the whole
   path has not been walked with the file picker).
-- The Wi-Fi Sync switch starts a service; there is no network drive behind it yet.
+- The duress wipe. The pieces are unit tested and it builds and installs, but
+  entering a duress code on hardware and then scanning the library for leftovers
+  has not been done yet.
 - The spectrum visualizer is decorative.
 
 ## Encryption format
 
-`CryptoEngine` builds one envelope per file from the user's code:
+`CryptoEngine` builds one envelope per file from the user's code, magic
+`AVMAX770`:
 
-1. `PBKDF2WithHmacSHA512`, 500,000 iterations, 32-byte salt, produces 768 bits
-   split into three 32-byte keys (AES, ChaCha20, HMAC).
-2. AES-256-GCM, 96-bit nonce, 128-bit tag.
-3. ChaCha20-Poly1305 over the AES output, its own 96-bit nonce.
-4. HMAC-SHA512 over `magic || salt || aesNonce || chachaNonce || ciphertext`,
-   magic `AVMAX768`.
+1. `PBKDF2WithHmacSHA512`, 500,000 iterations, 32-byte salt, produces a 512-bit
+   master key. The stretch runs once per code and salt and is cached for the
+   session (zeroed on lock), so browsing a vault does not pay it per carrier.
+2. The payload is sealed in 1 MiB frames. Each frame gets its own AES and ChaCha20
+   keys from the master key by HKDF-SHA512, bound to the frame index and nonces,
+   so frames cannot be reordered, duplicated, or dropped.
+3. AES-256-GCM (96-bit nonce, 128-bit tag), then ChaCha20-Poly1305 over the AES
+   output with its own 96-bit nonce.
+4. HMAC-SHA512 over the whole envelope, keyed from the master key by HKDF.
 
 Decryption checks the HMAC first, so a wrong code or a changed byte is rejected
-before either cipher runs.
+before either cipher runs. Frames are decrypted one at a time, so a restore
+streams instead of holding the whole file in memory several times over.
+
+Builds up to Aug 10, 2026 wrote a single-blob envelope, magic `AVMAX768`: a
+768-bit PBKDF2 stretch cut straight into AES, ChaCha20, and HMAC keys, no frames.
+Current builds read it but never write it, and re-seal any file still in it after
+the first unlock.
 
 ## Storage format (RAID-6)
 
@@ -121,6 +141,21 @@ The vault lives entirely in the FLAC files; there is no app-private database.
 The encryption envelope (`CryptoEngine`), all big-endian, sizes in bytes:
 
 ```
+magic "AVMAX770"  8
+salt              32
+frameSize         4      plaintext bytes per frame, 1 MiB
+totalLen          8      plaintext length, authenticated
+then per frame:
+  aesNonce        12
+  chachaNonce     12
+  ctLen           4
+  ciphertext      ctLen  frame, AES-GCM then ChaCha20-Poly1305 (32 bytes of tags)
+hmacTag           64     HMAC-SHA512 over everything before it
+```
+
+The legacy envelope, read only:
+
+```
 magic "AVMAX768"  8
 salt              32
 aesNonce          12
@@ -157,11 +192,12 @@ magic "AVIX"   4
 generation     8      newest wins
 crc32          4      CRC32 of encBody
 encBodyLen     4
-encBody        n      the index JSON, encrypted with the code (an AVMAX768 envelope)
+encBody        n      the index JSON, encrypted with the code (an AVMAX770 envelope)
 ```
 
-The index body is a JSON object `{generation, entries[]}` where each entry has
-`fileId, name, originalSize, chunkCount, chunkSize, totalLen, numData, createdAt`.
+The index body is a JSON object `{generation, entries[], folders[]}` where each
+entry has `fileId, name, originalSize, chunkCount, chunkSize, totalLen, numData,
+createdAt, colorLabel, tags, path`.
 
 ## RAID recovery, worked
 
@@ -202,8 +238,20 @@ for every pair of lost data chunks and checks the bytes come back exactly.
   from parity or mirror), decrypt, then either write to Downloads or open in the
   in-app viewer. The viewer renders images, text, audio, video, and PDF inside a
   screenshot-blocked window; plaintext never leaves the app.
-- **Duress.** Enter the duress code instead. It erases the stored credentials and
-  strips every AlphaVault block from the carriers, then shows an empty vault.
+- **Duress.** Enter the duress code instead, on the lock screen or in the
+  calculator. The app opens an ordinary, set-up vault that is empty, with no badge
+  and no onboarding screen, and wipes behind it:
+  - The duress code becomes the master code, and a random code nobody knows takes
+    the duress slot. The old master code stops working, and entering the duress
+    code again opens the same empty vault.
+  - A foreground service strips every AlphaVault block from every FLAC it can
+    reach (the library, plus all of shared storage when All-Files access is on),
+    index replicas first, and destroys the StrongBox key.
+  - The wipe is saved as pending before it starts and cleared when it finishes, so
+    a kill, crash, or reboot picks it up again on the next launch.
+  - What it leaves: a silent, minimum-priority "Updating music library"
+    notification while it runs, and the rewritten tracks get smaller and get new
+    modified times.
 - **Disguise.** With disguise on, the launcher is a working scientific calculator.
   Typing the code into it, alone or inside an equation, unlocks the real app.
 - **Compartments.** A different code decrypts a different index, so the same
@@ -218,32 +266,37 @@ A file's contents are always encrypted the same way (the cascade above). What
 differs is *where the encrypted bytes are put in the FLAC*. You choose per library
 under Options → Hiding method.
 
-**Hidden in audio (LSB) — the default, and the private one.** The encrypted bytes
+**Metadata blocks, the default.** The encrypted chunks go into FLAC `APPLICATION`
+metadata blocks. The audio, tags, and art stay byte-identical and it is fast and
+light, but any FLAC parser (`metaflac`) can see that non-standard blocks exist and
+read their coarse structure (how many, how big), even though it cannot read the
+contents. The app marks this method **"less secure, visible"** wherever it is
+selected.
+
+**Hidden in audio (LSB), opt-in.** The encrypted bytes
 are written into the least-significant bits of the audio samples, the way
 bennjordan's AlphaSteg `lsb` method works, then the track is re-encoded to FLAC
 (lossless, so the bits survive). It is hardened past the upstream: there is no
 `[0xAF,0x55]` marker. The embedding key is derived from your code and a hash of the
-samples' upper 15 bits — bits that never change when the LSB is written and are
-preserved by lossless FLAC — so nothing is stored to find. That key seeds which
+samples' upper 15 bits (bits that never change when the LSB is written and are
+preserved by lossless FLAC), so nothing is stored to find. That key seeds which
 sample LSBs carry bits and in what order, plus a keyed presence marker. Without the
 code the bits, their order, and the length are all unknown, so a metadata scan or a
 signature scan sees only noise. The costs: it changes the audio inaudibly (the
 "audio byte-identical" property is gone), it decodes and re-encodes each carrier
 (fine on the phone, which does the work), and a dedicated audio-steganalysis lab
-can still detect LSB anomalies. It hides the vault's presence from normal
-inspection; it is not proof against a determined forensic examination.
+can still detect LSB anomalies.
 
-**Metadata blocks — faster, but less secure because the presence is visible.** The
-encrypted chunks go into FLAC `APPLICATION` metadata blocks. The audio stays
-byte-identical and it is fast and light, but any FLAC parser (`metaflac`) can see
-that non-standard blocks exist and read their coarse structure (how many, how big),
-even though it cannot read the contents. Use this when you care about the audio
-being untouched and not about hiding that the vault exists. The app marks this
-method **"less secure — visible"** wherever it is selected.
+It is opt-in, not the default, because the re-encode is NOT lossless for the file
+as a whole yet. `FlacTranscoder` writes 16-bit PCM, so a 24-bit track comes back
+16-bit, and it writes only STREAMINFO, so the tags, album art, and every other
+metadata block are dropped. On a library that is a third 24-bit (the M500 test
+library is), that is not acceptable, so it stays opt-in until the re-encode keeps
+the bit depth and carries every other block over unchanged.
 
 Either way, the app can tell you which carriers *it* has touched with the metadata
 method (any FLAC tool can), but the LSB method is deliberately undetectable without
-your code — the app only knows its own LSB carriers from the encrypted index, not
+your code. The app only knows its own LSB carriers from the encrypted index, not
 by inspecting a random FLAC.
 
 ## Security notes
@@ -284,7 +337,7 @@ adb install -r app/build/outputs/apk/debug/AlphaVault-Ultra-ZFS.apk
 `main.py` is the AlphaSteg server, unchanged: FastAPI on `127.0.0.1:8000`, hiding
 payloads in audio by LSB or MFSK with AES-256-GCM. It is independent of the
 Android app. The app's own `LsbStegoEngine` is unused legacy; the vault embeds in
-FLAC metadata, not audio LSB.
+FLAC metadata by default, and the LSB method is opt-in (see Hiding methods).
 
 ```
 python -m venv .venv && source .venv/bin/activate
