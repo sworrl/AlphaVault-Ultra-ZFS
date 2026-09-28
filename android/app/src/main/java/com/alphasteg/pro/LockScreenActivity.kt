@@ -19,7 +19,7 @@ import com.alphasteg.pro.security.SecurityManager
  * Hex-code lock screen. No biometric (Android can't bind a specific finger to
  * duress). Onboarding sets a master code and a distinct duress code, each at
  * least 8 hex digits and each entered twice to confirm. Entering the duress code
- * later wipes the vault. The keypad reshuffles once per screen by default, or
+ * later wipes the vault behind an ordinary-looking empty session. The keypad reshuffles once per screen by default, or
  * after every keypress if that option is enabled.
  */
 class LockScreenActivity : AppCompatActivity() {
@@ -47,6 +47,7 @@ class LockScreenActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.alphasteg.pro.security.DuressWipe.resumeIfPending(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(false)
@@ -98,7 +99,7 @@ class LockScreenActivity : AppCompatActivity() {
                 text = "▶ DEV UNLOCK (seed + enter)"
                 setOnClickListener {
                     val key = com.alphasteg.pro.dev.DevSeed.provisionCredentials(securityManager)
-                    if (key.isNotEmpty()) proceedToMain(isDecoy = false, wipe = false, key = key)
+                    if (key.isNotEmpty()) proceedToMain(isDecoy = false, key = key)
                 }
             }
         }
@@ -228,17 +229,20 @@ class LockScreenActivity : AppCompatActivity() {
                 }
                 securityManager.setupCredentials(pendingMaster, firstEntry)
                 toast("Vault created.")
-                proceedToMain(isDecoy = false, wipe = false, key = pendingMaster)
+                proceedToMain(isDecoy = false, key = pendingMaster)
             }
             Step.LOCKED -> {
                 if (enteredPin.isEmpty()) { toast("Enter your code"); return }
                 when (securityManager.verifyPin(enteredPin)) {
                     SecurityManager.AuthResult.SUCCESS_MASTER ->
-                        proceedToMain(isDecoy = false, wipe = false, key = enteredPin)
+                        proceedToMain(isDecoy = false, key = enteredPin)
                     SecurityManager.AuthResult.SUCCESS_DURESS -> {
-                        // Duress: destroy credentials, launch a wiping, empty-looking vault.
-                        securityManager.wipeCredentials()
-                        proceedToMain(isDecoy = true, wipe = true, key = enteredPin)
+                        // Duress: the duress code becomes the master, the wipe runs in the
+                        // background, and the session is an ordinary one keyed to a code
+                        // that owns nothing, so it shows a set-up vault that is empty.
+                        securityManager.adoptDuressAsMaster(enteredPin)
+                        com.alphasteg.pro.security.DuressWipe.begin(this)
+                        proceedToMain(isDecoy = false, key = enteredPin)
                     }
                     SecurityManager.AuthResult.INVALID -> {
                         toast("Invalid code")
@@ -263,7 +267,7 @@ class LockScreenActivity : AppCompatActivity() {
             toast("Enter the library's code first (at least ${SecurityManager.MIN_LEN} characters).")
             return
         }
-        proceedToMain(isDecoy = false, wipe = false, key = enteredPin, guest = true)
+        proceedToMain(isDecoy = false, key = enteredPin, guest = true)
     }
 
     private fun setupKeypad() {
@@ -306,10 +310,9 @@ class LockScreenActivity : AppCompatActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
-    private fun proceedToMain(isDecoy: Boolean, wipe: Boolean, key: String, guest: Boolean = false) {
+    private fun proceedToMain(isDecoy: Boolean, key: String, guest: Boolean = false) {
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra("EXTRA_DECOY_MODE", isDecoy)
-            putExtra("EXTRA_WIPE", wipe)
             putExtra("EXTRA_VAULT_KEY", key)
             putExtra("EXTRA_GUEST", guest)
         }

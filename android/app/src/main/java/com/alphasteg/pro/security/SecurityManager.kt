@@ -81,12 +81,22 @@ class SecurityManager(context: Context) {
         return master?.let { Match(AuthResult.SUCCESS_MASTER, it) }
     }
 
-    /** Erase stored credentials, forcing re-onboarding. Part of the duress path. */
-    fun wipeCredentials() {
+    /**
+     * The duress code takes over as the master code, and a random, never-shown code
+     * fills the duress slot. The stored state keeps its usual shape, the old master
+     * stops working, and re-entering the duress code opens the same (empty) vault,
+     * so nothing on the device shows a wipe happened.
+     */
+    fun adoptDuressAsMaster(duressPin: String) {
+        val salt = storedSalt() ?: return
+        val rnd = SecureRandom()
+        val filler = String(CharArray(duressPin.length) { ALPHABET[rnd.nextInt(ALPHABET.length)] })
         prefs.edit()
-            .remove(PREF_PIN_HASH).remove(PREF_DURESS_HASH).remove(PREF_SALT)
-            .remove(PREF_MASTER_LEN).remove(PREF_DURESS_LEN)
-            .apply()
+            .putString(PREF_PIN_HASH, verifier(duressPin, salt))
+            .putString(PREF_DURESS_HASH, verifier(filler, salt))
+            .putInt(PREF_MASTER_LEN, duressPin.length)
+            .putInt(PREF_DURESS_LEN, filler.length)
+            .commit()
     }
 
     fun isValidPin(pin: String): Boolean =

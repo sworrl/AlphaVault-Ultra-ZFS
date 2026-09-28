@@ -12,7 +12,7 @@ This directory contains the native **Android 14 Application (APK)** project for 
 - **RAID Fault Tolerance**: Any two lost chunks are recovered by solving the 2×2 system over the field; hot-spare mirrors tolerate losing whole albums beyond that.
 
 ### 2. Android Security
-- **Master code lock screen**, with a **duress code** that wipes credentials and opens a clean decoy vault.
+- **Master code lock screen**, with a **duress code** that turns itself into the master code, opens an ordinary empty vault, and wipes the carriers in a foreground service that resumes after a kill or reboot. See `SECURITY.md`.
 - **Two-stage key derivation**: PBKDF2-HMAC-SHA512 at 500,000 iterations produces a master key **once per session**, cached in memory; each frame then takes its own AES and ChaCha subkeys from it via HKDF-SHA512. Guess-resistance is unchanged — an attacker still pays the full stretch per password candidate — while browsing a vault no longer re-runs it per carrier. The cache is zeroed on lock.
 - **Cascade encryption**: AES-256-GCM, then ChaCha20-Poly1305, under an outer HMAC-SHA512 that is verified *before* either cipher touches the data.
 - **Framed payloads (1 MiB)**: an AEAD cipher cannot emit plaintext until it has verified its tag, so Java's GCM and Poly1305 buffer the *whole* message — sealing one big blob forced several full-size copies to coexist and capped restores at ~64 MB on a 256 MB heap. Each frame is now sealed independently, so `restoreTo(OutputStream)` streams a file to disk or a socket with a one-frame working set. Frames cannot be reordered, duplicated, dropped or truncated: subkeys are bound to the frame index, the payload length is authenticated in the header, and the outer HMAC covers every byte.

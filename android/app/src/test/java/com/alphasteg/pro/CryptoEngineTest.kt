@@ -204,4 +204,15 @@ class CryptoEngineTest {
             runCatching { CryptoEngine.decryptPayload(a, "passwordTwo2") }.isSuccess
         )
     }
+
+    @Test
+    fun legacyEnvelopesStillOpen() {
+        val plain = data(5000)
+        val enc = LegacyEnvelope.seal(plain, pw)
+        assertArrayEquals(plain, CryptoEngine.decryptPayload(enc, pw))
+        val out = ByteArrayOutputStream()
+        CryptoEngine.decryptTo(com.alphasteg.pro.engine.ArraySource(enc), pw, out)
+        assertArrayEquals(plain, out.toByteArray())
+        assertTrue(runCatching { CryptoEngine.decryptPayload(enc, "notThePassword") }.isFailure)
+    }
 }

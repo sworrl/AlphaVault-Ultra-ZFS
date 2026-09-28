@@ -43,8 +43,7 @@ class VaultViewerActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         val name = intent.getStringExtra(EXTRA_NAME) ?: "Vaulted file"
-        val bytes = pending
-        pending = null
+        val bytes = pending.remove(intent.getLongExtra(EXTRA_TOKEN, -1L))
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -344,16 +343,22 @@ class VaultViewerActivity : AppCompatActivity() {
         private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
+        private const val EXTRA_TOKEN = "vault_view_token"
+
         // Plaintext handed over in memory rather than through an Intent (which caps
-        // at ~1 MB and would be logged). Cleared as soon as the viewer reads it.
-        @Volatile
-        private var pending: ByteArray? = null
+        // at ~1 MB and would be logged). Each open gets its own token, so a second
+        // open started before the first viewer appears cannot swap the bytes under
+        // it. Removed as soon as the viewer reads it.
+        private val pending = java.util.concurrent.ConcurrentHashMap<Long, ByteArray>()
+        private val nextToken = java.util.concurrent.atomic.AtomicLong()
 
         fun show(activity: AppCompatActivity, name: String, bytes: ByteArray) {
-            pending = bytes
+            val token = nextToken.incrementAndGet()
+            pending[token] = bytes
             activity.startActivity(
                 android.content.Intent(activity, VaultViewerActivity::class.java)
                     .putExtra(EXTRA_NAME, name)
+                    .putExtra(EXTRA_TOKEN, token)
             )
         }
     }

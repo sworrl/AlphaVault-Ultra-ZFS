@@ -268,6 +268,7 @@ object CryptoEngine {
     // ---- decryption ----
 
     fun decryptPayload(data: ByteArray, password: String?): ByteArray {
+        if (isLegacy768(data)) return decryptLegacy768(data, password)
         if (!isEncryptedPayload(data)) return data
         val out = java.io.ByteArrayOutputStream(declaredLength(data).toInt().coerceAtLeast(32))
         decryptTo(data, password, out)
@@ -285,6 +286,10 @@ object CryptoEngine {
      * before the outer HMAC has been checked over the entire envelope.
      */
     fun decryptTo(data: ByteArray, password: String?, out: OutputStream) {
+        if (isLegacy768(data)) {
+            out.write(decryptLegacy768(data, password))
+            return
+        }
         if (!isEncryptedPayload(data)) {
             out.write(data)
             return
@@ -306,6 +311,11 @@ object CryptoEngine {
             throw IllegalArgumentException("Corrupted cascade vault payload header.")
         }
         val magic = source.slice(0, CASCADE_MAGIC.size)
+        if (magic.contentEquals(LEGACY_MAGIC_768)) {
+            // Legacy envelopes are one sealed blob; they only came from small early vaults.
+            out.write(decryptLegacy768(source.slice(0, total.toInt()), password))
+            return
+        }
         if (!magic.contentEquals(CASCADE_MAGIC)) {
             throw IllegalArgumentException("Not a cascade vault payload.")
         }
@@ -401,6 +411,56 @@ object CryptoEngine {
         val start = 8 + SALT_SIZE + 4
         for (i in 0 until 8) v = (v shl 8) or (data[start + i].toLong() and 0xFF)
         return v
+    }
+
+    // ---- legacy envelope (read-only) ----
+
+    /**
+     * The pre-frame envelope that builds up to Aug 10, 2026 wrote:
+     * MAGIC(8) + SALT(32) + AES_NONCE(12) + CHACHA_NONCE(12) + ciphertext + HMAC(64),
+     * with AES, ChaCha and HMAC keys cut straight from a 768-bit PBKDF2 stretch.
+     * Only decrypted, never written, so libraries vaulted by those builds still open.
+     */
+    private val LEGACY_MAGIC_768 = "AVMAX768".toByteArray(Charsets.UTF_8)
+
+    /** True if an envelope starting with [head] is the legacy AVMAX768 format. */
+    fun isLegacyEnvelope(head: ByteArray): Boolean = isLegacy768(head)
+
+    private fun isLegacy768(data: ByteArray): Boolean =
+        data.size >= 8 && data.copyOfRange(0, 8).contentEquals(LEGACY_MAGIC_768)
+
+    private fun decryptLegacy768(data: ByteArray, password: String?): ByteArray {
+        if (password.isNullOrBlank()) throw IllegalArgumentException("This payload is encrypted. Password required.")
+        if (data.size < 64 + HMAC_SIZE) throw IllegalArgumentException("Corrupted cascade vault payload header.")
+        val salt = data.copyOfRange(8, 40)
+        val aesNonce = data.copyOfRange(40, 52)
+        val chachaNonce = data.copyOfRange(52, 64)
+        val tagStart = data.size - HMAC_SIZE
+
+        val keys = legacyKeys(password.trim(), salt)
+        val mac = Mac.getInstance("HmacSHA512")
+        mac.init(SecretKeySpec(keys.copyOfRange(64, 96), "HmacSHA512"))
+        mac.update(data, 0, tagStart)
+        if (!MessageDigest.isEqual(data.copyOfRange(tagStart, data.size), mac.doFinal())) {
+            throw IllegalArgumentException("Decryption failed: Incorrect Password or Tampered Payload Tag.")
+        }
+
+        val chacha = chaChaPoly1305Cipher()
+        chacha.init(Cipher.DECRYPT_MODE, SecretKeySpec(keys.copyOfRange(32, 64), "ChaCha20"), IvParameterSpec(chachaNonce))
+        val layer1 = chacha.doFinal(data, 64, tagStart - 64)
+        val aes = Cipher.getInstance("AES/GCM/NoPadding")
+        aes.init(Cipher.DECRYPT_MODE, SecretKeySpec(keys.copyOfRange(0, 32), "AES"), GCMParameterSpec(TAG_SIZE_BITS, aesNonce))
+        return aes.doFinal(layer1)
+    }
+
+    /** The legacy 768-bit stretch, memoized like [masterKey] so browsing stays cheap. */
+    private fun legacyKeys(password: String, salt: ByteArray): ByteArray {
+        val id = "768:" + cacheId(password, salt)
+        synchronized(keyCache) { keyCache[id] }?.let { return it }
+        val spec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, 768)
+        val derived = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512").generateSecret(spec).encoded
+        synchronized(keyCache) { keyCache[id] = derived }
+        return derived
     }
 
     // ---- little helpers ----
